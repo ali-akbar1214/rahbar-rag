@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & Style Check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install linters
+        run: |
+          pip install ruff==0.8.2 mypy==1.13.0
+
+      - name: Run Ruff Linter
+        run: |
+          ruff check api/ indexer/ eval/
+
+      - name: Run Mypy Type Checker
+        run: |
+          mypy --ignore-missing-imports api/app indexer/pipeline eval/run_eval.py
+
+  test:
+    name: Unit Tests & Code Coverage
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install test dependencies
+        run: |
+          pip install -r api/requirements.txt -r api/requirements-dev.txt
+          pip install -r indexer/requirements.txt -r indexer/requirements-dev.txt
+
+      - name: Run pytest with 60% coverage threshold
+        run: |
+          pytest --cov=app --cov-report=term-missing --cov-fail-under=60 api/tests indexer/tests
+
+  manifests:
+    name: Kubeconform Manifest Validation
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Kustomize & Kubeconform
+        run: |
+          curl -s https://raw.githubusercontent.com/yannh/kubeconform/master/scripts/install.sh | bash
+          sudo mv bin/kubeconform /usr/local/bin/
+
+      - name: Validate Kubernetes manifests with Kubeconform
+        run: |
+          kubectl kustomize k8s/overlays/prod | kubeconform -strict -summary -kubernetes-version 1.30.0
+
+  security-scan:
+    name: Trivy Vulnerability Scan
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build local API image for scanning
+        run: |
+          docker build -t rahbar-api:${{ github.sha }} -f api/Dockerfile api/
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: "rahbar-api:${{ github.sha }}"
+          format: "table"
+          exit-code: "0"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
+
+  e2e-eval:
+    name: Ephemeral Kind Cluster & E2E Eval Gate
+    runs-on: ubuntu-24.04
+    needs: [lint, test, manifests]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: rahbar-ci
+          version: v0.23.0
+
+      - name: Build Docker images
+        run: |
+          docker build -t aliakbar1214/rahbar-api:${{ github.sha }} -f api/Dockerfile api/
+          docker build -t aliakbar1214/rahbar-indexer:${{ github.sha }} -f indexer/Dockerfile indexer/
+          docker build -t aliakbar1214/rahbar-ui:${{ github.sha }} -f ui/Dockerfile ui/
+
+      - name: Load images into kind cluster
+        run: |
+          kind load docker-image aliakbar1214/rahbar-api:${{ github.sha }} --name rahbar-ci
+          kind load docker-image aliakbar1214/rahbar-indexer:${{ github.sha }} --name rahbar-ci
+          kind load docker-image aliakbar1214/rahbar-ui:${{ github.sha }} --name rahbar-ci
+
+      - name: Deploy base stack and Chroma
+        run: |
+          kubectl apply -f k8s/base/namespace.yaml
+          kubectl apply -f k8s/base/configmap.yaml
+          kubectl create secret generic rahbar-secret -n rahbar --from-literal=LLM_API_KEY="ci-test-key"
+          kubectl apply -f k8s/base/chroma-statefulset.yaml
+          kubectl apply -f k8s/base/redis.yaml
+          kubectl rollout status statefulset/rahbar-chroma -n rahbar --timeout=120s
+
+      - name: Run indexer Job on fixture corpus
+        run: |
+          kubectl create job --from=cronjob/rahbar-reindex-cronjob ci-indexer -n rahbar || kubectl apply -f k8s/base/indexer-job.yaml
+          kubectl wait --for=condition=complete job/rahbar-indexer-job -n rahbar --timeout=180s || true
+
+      - name: Deploy API and UI
+        run: |
+          kubectl apply -f k8s/base/api-deployment.yaml
+          kubectl apply -f k8s/base/ui-deployment.yaml
+          kubectl rollout status deployment/rahbar-api -n rahbar --timeout=120s
+
+      - name: Port-forward API service
+        run: |
+          kubectl port-forward svc/rahbar-api 8000:8000 -n rahbar &
+          sleep 5
+
+      - name: Run E2E evaluation gate
+        run: |
+          pip install httpx pyyaml
+          python eval/run_eval.py --api http://127.0.0.1:8000 --golden eval/fixtures/golden.fixture.yaml

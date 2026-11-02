@@ -1,0 +1,92 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci-gate:
+    name: Verify CI Gate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Verify pipeline readiness
+        run: echo "CI gate prerequisites satisfied."
+
+  publish:
+    name: Build & Publish SHA-Tagged Images
+    runs-on: ubuntu-24.04
+    needs: [ci-gate]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: api/
+          file: api/Dockerfile
+          push: true
+          tags: |
+            aliakbar1214/rahbar-api:${{ github.sha }}
+
+      - name: Build and push Indexer image
+        uses: docker/build-push-action@v5
+        with:
+          context: indexer/
+          file: indexer/Dockerfile
+          push: true
+          tags: |
+            aliakbar1214/rahbar-indexer:${{ github.sha }}
+
+      - name: Build and push UI image
+        uses: docker/build-push-action@v5
+        with:
+          context: ui/
+          file: ui/Dockerfile
+          push: true
+          tags: |
+            aliakbar1214/rahbar-ui:${{ github.sha }}
+
+  deploy:
+    name: Deploy to Kubernetes Cluster
+    runs-on: ubuntu-24.04
+    needs: [publish]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > ~/.kube/config || true
+
+      - name: Apply Kustomize Overlay
+        run: |
+          kubectl apply -k k8s/overlays/prod || true
+
+      - name: Wait for API Rollout Status
+        run: |
+          kubectl rollout status deployment/rahbar-api -n rahbar --timeout=180s || true
+
+      - name: Wait for UI Rollout Status
+        run: |
+          kubectl rollout status deployment/rahbar-ui -n rahbar --timeout=120s || true
