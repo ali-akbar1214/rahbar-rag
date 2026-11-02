@@ -1,0 +1,55 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rahbar-reindex-cronjob
+  namespace: rahbar
+  labels:
+    app: rahbar
+    component: indexer
+spec:
+  schedule: "0 2 * * 0"   # Weekly on Sunday at 02:00 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app: rahbar
+            component: indexer
+        spec:
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          containers:
+            - name: indexer
+              image: aliakbar1214/rahbar-indexer:latest
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - configMapRef:
+                    name: rahbar-config
+              env:
+                - name: LLM_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: rahbar-secret
+                      key: LLM_API_KEY
+                      optional: true
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: 1500m
+                  memory: 2048Mi
+              securityContext:
+                readOnlyRootFilesystem: false
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
