@@ -1,0 +1,56 @@
+# FAST-NUCES Corpus Sources Configuration
+# Used by corpus/fetch.py and the ingestion pipeline
+
+documents:
+  # Property 2: two versions of one policy (and 7: exact clause numbers)
+  - name: Undergraduate Academic Rules (Aug 2023)
+    url: http://nu.edu.pk/public/downloads/Academic-Rules-Undergrad-Aug-2023.pdf
+    doc_version: "2023-08"
+    superseded: true
+    notes: Superseded policy defining prerequisite failures, probation, and course registration (clause 4.2).
+
+  - name: Academic Rules Handbook (Jun 2026)
+    url: https://nu.edu.pk/public/downloads/Academic_Rules_Handbook_2026.pdf
+    doc_version: "2026-06"
+    superseded: false
+    notes: Active official policy with 53 pages of numbered clauses (attendance 1.21, probation warning 5.4, prerequisite 4.2).
+
+  - name: Prospectus 2026 - Academic Rules and Regulations
+    url: https://nu.edu.pk/Admissions/ProspectusUpload/Academic-Rules-and-Regulations.pdf
+    doc_version: "2026"
+    superseded: false
+    notes: Summary version of current academic rules with condensed clause numbering.
+
+  # Property 5: long definitions
+  - name: Student Handbook (Jun 2026)
+    url: https://nu.edu.pk/public/downloads/Student_Handbook_2026.pdf
+    doc_version: "2026-06"
+    superseded: false
+    notes: Extensive code of conduct, definitions of disciplinary offenses, and academic integrity policies.
+
+  # Property 4: tables, and versions over time
+  - name: Annual Report 2019-20
+    url: https://nu.edu.pk/public/downloads/AnnualReportForm/Annual-Report-2019-20.pdf
+    doc_version: "2019-20"
+    superseded: false
+    notes: Tabular reporting of campus graduation rates, research funding, and faculty allocation.
+
+  - name: Annual Report 2023-24
+    url: https://nu.edu.pk/public/downloads/AnnualReportForm/Annual-Report-2023-24.pdf
+    doc_version: "2023-24"
+    superseded: false
+    notes: Tabular institutional dataset containing multi-column enrollment and grade distribution metrics.
+
+  # Property 4: HTML structure and tables
+  - name: Fee Structure Policy
+    url: https://www.nu.edu.pk/Admissions/FeeStructure
+    doc_version: "2026-27"
+    superseded: false
+    notes: Comprehensive multi-column fee tables per credit hour, security deposits, and tuition breakdown.
+
+  # Property 3: Scanned / Image-only PDF
+  - name: Faculty Entrepreneurship and Technical Start-ups Policy
+    url: https://nu.edu.pk/OricResources/ResearchPolicies/27.pdf
+    doc_version: "2022-05"
+    superseded: false
+    notes: Image-only scanned PDF requiring OCR processing or explicit documented extraction loss.
