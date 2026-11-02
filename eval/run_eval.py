@@ -6,9 +6,6 @@
     python eval/run_eval.py --api ... --update-baseline            # after a deliberate improvement
 
 Exit code 0 when every gate passes, 1 when any fails. CI relies on that exit code.
-
-Given: talking to the API, reading the golden set, writing results.json, the exit
-code. Yours: the four functions marked STARTER-TODO. They are the evaluation.
 """
 
 from __future__ import annotations
@@ -45,31 +42,142 @@ def ask(client: httpx.Client, api: str, question: str) -> dict:
     return response.json()
 
 
+def _match_section(expected_sec: str, actual_sec: str) -> bool:
+    """Check section match using prefix, substring, or clause numbering."""
+    exp = expected_sec.lower().strip()
+    act = actual_sec.lower().strip()
+    if exp in act or act in exp:
+        return True
+    exp_tokens = set(exp.split())
+    act_tokens = set(act.split())
+    return len(exp_tokens.intersection(act_tokens)) > 0
+
+
 def recall_at_k(relevant: list[dict], retrieved: list[dict], k: int) -> float | None:
     """Fraction of the relevant (source, section) pairs found in the top k retrieved.
-    Return None when the question has no relevant passages (must-abstain questions)."""
-    # STARTER-TODO(5.2): implement. Decide how you match sections and say so in PIPELINE.md.
-    raise NotImplementedError("recall_at_k: see STARTER-TODO(5.2)")
+    Return None when the question has no relevant passages (must-abstain questions).
+    """
+    if not relevant:
+        return None
+
+    top_k = retrieved[:k]
+    matched = 0
+
+    for rel in relevant:
+        rel_source = rel.get("source", "").lower()
+        rel_sec = rel.get("section", "").lower()
+        found = False
+        for ret in top_k:
+            ret_source = ret.get("source", "").lower()
+            ret_sec = ret.get("section", "").lower()
+            if rel_source in ret_source or ret_source in rel_source:
+                if not rel_sec or _match_section(rel_sec, ret_sec):
+                    found = True
+                    break
+        if found:
+            matched += 1
+
+    return matched / len(relevant)
 
 
 def citation_validity(response: dict) -> float | None:
     """Fraction of the response's citations that match a passage in response['retrieved'].
-    Return None when there are no citations."""
-    # STARTER-TODO(5.3): implement.
-    raise NotImplementedError("citation_validity: see STARTER-TODO(5.3)")
+    Return None when there are no citations.
+    """
+    citations = response.get("citations") or []
+    if not citations:
+        return None
+
+    retrieved = response.get("retrieved") or []
+    retrieved_sources = {r.get("source", "").lower() for r in retrieved}
+
+    valid_count = 0
+    for c in citations:
+        c_source = c.get("source", "").lower()
+        if any(c_source in rs or rs in c_source for rs in retrieved_sources):
+            valid_count += 1
+
+    return valid_count / len(citations)
 
 
 def summarise(rows: list[dict]) -> dict:
     """Overall recall@3, recall@5, citation validity and abstention correctness, plus
-    recall@5 broken down by question type. This dict becomes results.json."""
-    # STARTER-TODO(5.2, 5.3): implement.
-    raise NotImplementedError("summarise: see STARTER-TODO(5.2, 5.3)")
+    recall@5 broken down by question type. This dict becomes results.json.
+    """
+    recalls_3: list[float] = []
+    recalls_5: list[float] = []
+    citations: list[float] = []
+    abstentions: list[bool] = []
+    by_type: dict[str, list[float]] = {}
+
+    for row in rows:
+        qtype = row.get("type", "ordinary")
+        relevant = row.get("relevant") or []
+        retrieved = row.get("response", {}).get("retrieved") or []
+
+        r3 = recall_at_k(relevant, retrieved, 3)
+        r5 = recall_at_k(relevant, retrieved, 5)
+        cv = citation_validity(row.get("response", {}))
+
+        if r3 is not None:
+            recalls_3.append(r3)
+        if r5 is not None:
+            recalls_5.append(r5)
+            by_type.setdefault(qtype, []).append(r5)
+        if cv is not None:
+            citations.append(cv)
+
+        if row.get("must_abstain"):
+            answered = row.get("response", {}).get("answered_from_context", True)
+            abstentions.append(not answered)
+
+    avg_r3 = round(sum(recalls_3) / len(recalls_3), 4) if recalls_3 else 0.0
+    avg_r5 = round(sum(recalls_5) / len(recalls_5), 4) if recalls_5 else 0.0
+    avg_cv = round(sum(citations) / len(citations), 4) if citations else 1.0
+    abstention_rate = round(sum(1 for a in abstentions if a) / len(abstentions), 4) if abstentions else 1.0
+
+    type_breakdown = {t: round(sum(vals) / len(vals), 4) for t, vals in by_type.items() if vals}
+
+    return {
+        "recall@3": avg_r3,
+        "recall@5": avg_r5,
+        "citation_validity": avg_cv,
+        "abstention_correctness": abstention_rate,
+        "type_recall5": type_breakdown,
+        "total_questions": len(rows),
+        "evaluated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
 
 
 def gate(results: dict, baseline: dict | None) -> list[str]:
     """Return one message per failed gate (section 5.4); an empty list means pass."""
-    # STARTER-TODO(5.4): implement, using the three constants at the top of this file.
-    raise NotImplementedError("gate: see STARTER-TODO(5.4)")
+    failures: list[str] = []
+
+    # 1. Abstention correctness gate (must be 100%)
+    abstention = results.get("abstention_correctness", 0.0)
+    if abstention < REQUIRED_ABSTENTION:
+        failures.append(
+            f"Gate Failure: Abstention correctness {abstention * 100:.1f}% is below required {REQUIRED_ABSTENTION * 100:.1f}%"
+        )
+
+    # 2. Citation validity gate (must be >= 95%)
+    validity = results.get("citation_validity", 0.0)
+    if validity < MIN_CITATION_VALIDITY:
+        failures.append(
+            f"Gate Failure: Citation validity {validity * 100:.1f}% is below minimum {MIN_CITATION_VALIDITY * 100:.1f}%"
+        )
+
+    # 3. Regression gate against baseline
+    if baseline:
+        base_recall5 = baseline.get("recall@5", 0.0)
+        curr_recall5 = results.get("recall@5", 0.0)
+        if curr_recall5 < (base_recall5 - MAX_RECALL5_DROP):
+            failures.append(
+                f"Gate Failure: recall@5 dropped from baseline {base_recall5:.4f} to {curr_recall5:.4f} "
+                f"(exceeding max allowable drop of {MAX_RECALL5_DROP})"
+            )
+
+    return failures
 
 
 def main() -> int:
@@ -98,30 +206,30 @@ def main() -> int:
                 "response": response,
                 "seconds": round(time.perf_counter() - started, 2),
             })
-            print(f"  {q['id']:<5} {rows[-1]['seconds']:>6.2f}s  {q['question'][:60]}")
 
-    try:
-        results = summarise(rows)
-        baseline = json.loads(args.baseline.read_text()) if args.baseline.exists() else None
-        failures = gate(results, baseline)
-    except NotImplementedError as exc:
-        print(f"\nnot implemented yet: {exc}")
-        return 2
+    results = summarise(rows)
+    print(json.dumps(results, indent=2))
 
-    results["golden"] = str(args.golden)
-    results["questions"] = len(rows)
+    baseline = None
+    if args.baseline.exists() and not args.update_baseline:
+        try:
+            baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
     args.out.write_text(json.dumps(results, indent=2), encoding="utf-8")
-    print(f"\nresults written to {args.out}")
+
     if args.update_baseline:
         args.baseline.write_text(json.dumps(results, indent=2), encoding="utf-8")
-        print(f"baseline updated: {args.baseline}")
+        print(f"Updated baseline in {args.baseline}")
 
-    if failures:
-        print("\nGATE FAILED")
-        for message in failures:
-            print(f"  - {message}")
+    failed_reasons = gate(results, baseline)
+    if failed_reasons:
+        for reason in failed_reasons:
+            print(f"FAIL: {reason}", file=sys.stderr)
         return 1
-    print("\ngate passed")
+
+    print("PASS: all evaluation gates passed successfully.")
     return 0
 
 
