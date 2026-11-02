@@ -1,0 +1,13 @@
+$ kubectl get endpoints -n rahbar
+NAME                  ENDPOINTS                                                  AGE
+rahbar-api            10.244.0.14:8000,10.244.0.15:8000,10.244.0.16:8000         45m
+rahbar-chroma         10.244.0.12:8000                                           45m
+rahbar-redis          10.244.0.13:6379                                           45m
+rahbar-ui             10.244.0.17:8080                                           45m
+
+$ kubectl get svc -n rahbar
+NAME            TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE
+rahbar-api      ClusterIP   10.108.140.21    <none>        8000/TCP   45m
+rahbar-chroma   ClusterIP   10.104.22.88     <none>        8000/TCP   45m
+rahbar-redis    ClusterIP   10.109.182.102   <none>        6379/TCP   45m
+rahbar-ui       ClusterIP   10.96.211.54     <none>        8080/TCP   45m
