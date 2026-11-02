@@ -1,0 +1,57 @@
+services:
+  chroma:
+    image: chromadb/chroma:1.0.12
+    container_name: rahbar-chroma
+    ports:
+      - "8001:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/data
+      - ANONYMIZED_TELEMETRY=FALSE
+    volumes:
+      - chroma_data:/data
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: rahbar-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+
+  api:
+    build:
+      context: api/
+      dockerfile: Dockerfile
+    container_name: rahbar-api
+    ports:
+      - "8000:8000"
+    environment:
+      - RETRIEVER=chroma
+      - LLM_PROVIDER=hosted
+      - EMBED_MODEL=nomic-embed-text
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8000
+      - CHROMA_COLLECTION=rahbar
+      - TOP_K=5
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CACHE_ENABLED=true
+      - CACHE_THRESHOLD=0.95
+      - HOSTED_BASE_URL=https://api.groq.com/openai/v1
+      - LLM_API_KEY=${LLM_API_KEY:-}
+    depends_on:
+      - chroma
+      - redis
+
+  ui:
+    build:
+      context: ui/
+      dockerfile: Dockerfile
+    container_name: rahbar-ui
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+
+volumes:
+  chroma_data:
