@@ -1,18 +1,44 @@
-# Engineering notes
+# Engineering Notes: Architectural Questions and Failure Analyses
 
-<!-- STARTER-TODO(7): answer all seven questions from section 7 of the case study, each
-     pointing to your own files and line numbers. A generic answer scores zero. -->
+## 1. Indexing in API Startup: 3 Replicas and One Chroma Volume
+If indexing is moved into the API startup lifecycle (e.g. FastAPI lifespan handler in [api/app/main.py](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/api/app/main.py#L28-L44)), the system breaks catastrophically:
+1. **Concurrent SQLite Lock Contention**: ChromaDB persists data via SQLite/DuckDB files on a single volume claim. When 3 API replicas boot concurrently, they all invoke `store()` ([indexer/pipeline/store.py](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/indexer/pipeline/store.py#L19-L55)), causing database write locks, transaction deadlocks, and index corruption (`sqlite3.OperationalError: database is locked`).
+2. **Startup Probe Timeout Crashes**: Ingesting and embedding 180+ pages of PDFs requires several minutes. This exceeds the `startupProbe` failure threshold ([k8s/base/api-deployment.yaml](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/k8s/base/api-deployment.yaml#L66-L71)), causing Kubernetes to kill and restart all pods in an endless `CrashLoopBackOff`.
+3. **The Preventing Objects**:
+   - The decoupled batch **Job** ([k8s/base/indexer-job.yaml](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/k8s/base/indexer-job.yaml#L1-L42)) with `restartPolicy: OnFailure` and `backoffLimit: 3`, which runs once as the sole writer.
+   - The **StatefulSet PVC** with `ReadWriteOnce` access mode ([k8s/base/chroma-statefulset.yaml](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/k8s/base/chroma-statefulset.yaml#L66-L75)), which strictly reserves volume attachment for the dedicated Chroma storage pod.
 
-## 1. Indexing in API startup: what breaks with 3 replicas and one Chroma volume?
+## 2. Readiness and Liveness Swapped, Chroma Slow for 90 Seconds
+If liveness is wired to `/readyz` and readiness is wired to `/healthz`:
+- **What happens**: During a 90-second Chroma slowdown, every liveness probe call to `/readyz` ([api/app/routes/health.py](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/api/app/routes/health.py#L26-L84)) blocks or times out. After 3 consecutive probe failures (3 x 3s timeout), kubelet interprets the process as dead and restarts the container. Because all 3 replicas depend on the same slow Chroma, all 3 replicas are killed and restarted in a synchronized **cluster-wide restart storm**. When they reboot, they hit Chroma simultaneously during initialization, exacerbating the database overload.
+- **Correct Configuration**: As implemented in [k8s/base/api-deployment.yaml](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/k8s/base/api-deployment.yaml#L72-L84), liveness queries `/healthz`, which touches zero external dependencies ([api/app/routes/health.py](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/api/app/routes/health.py#L20-L24)). The process stays alive, while `/readyz` simply stops sending traffic to degraded replicas until Chroma recovers, without killing any containers.
 
-## 2. Readiness and liveness swapped, Chroma slow for 90 seconds: what happens?
+## 3. What a CPU-based HPA Measures on a Generation Service
+- **What it actually measures**: When the API generates an answer using a hosted provider ([api/app/providers/llm/hosted.py](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/api/app/providers/llm/hosted.py#L82-L106)), the FastAPI worker thread spends >90% of its execution time idle in an asynchronous network I/O wait (`httpx.Client.post`). During this time, the CPU core is idle. As evidenced by our cluster metrics in [docs/evidence/05-kubectl-get-hpa.txt](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/docs/evidence/05-kubectl-get-hpa.txt#L8), CPU utilization remains at ~18% (18m out of 100m requests) even under load. The CPU-based HPA ([k8s/base/hpa.yaml](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/k8s/base/hpa.yaml#L1-L22)) is essentially measuring ASGI idle wait times.
+- **The Correct Scaling Signal**: The service should be scaled based on **Concurrent In-Flight HTTP Requests** or **Pending Request Queue Depth**.
+- **What to build**: Deploy Prometheus and the Prometheus Adapter (or KEDA), export an in-flight gauge metric (`http_requests_in_flight`) from [api/app/main.py](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/api/app/main.py#L49-L70), and configure an HPA Custom Metric targeting 15 concurrent requests per pod.
 
-## 3. What does a CPU-based HPA measure on a generation service, and what should scale it?
+## 4. Indexer Peak Memory, Limits, Margin, and Exit Code
+- **Peak Memory**: As measured in [docs/evidence/03-kubectl-top.txt](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/docs/evidence/03-kubectl-top.txt#L8) via `kubectl top pods -n rahbar`, the indexer Job peaks at **680 MiB** while generating vector batches with `nomic-embed-text` ([indexer/pipeline/embed.py](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/indexer/pipeline/embed.py#L32-L68)).
+- **Configured Limit**: Configured at **2048 MiB** (`2Gi`) with a request of `512Mi` ([k8s/base/indexer-job.yaml](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/k8s/base/indexer-job.yaml#L36-L40)).
+- **Safety Margin**: 2048 MiB - 680 MiB = **1368 MiB (3.0x safety factor)**, comfortably handling larger PDF rasterization buffers during OCR.
+- **Failure Exit Code**: If the limit is set too low (e.g. 500 MiB), the Linux kernel out-of-memory killer sends `SIGKILL` (signal 9), causing the pod to crash with **Exit Code 137** (`128 + 9`).
 
-## 4. The indexer's peak memory, its limit, the margin, and the exit code when it is wrong
+## 5. recall@5 by Question Type: Where it is Worst and Why
+- **Worst Category**: `exact-term` questions (`0.8333` in [eval/results.json](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/eval/results.json#L9)), compared to `0.9000` for `ordinary` conceptual questions.
+- **Why Embeddings Struggle**: Dense embedding models (like `nomic-embed-text`) project text into a high-dimensional continuous semantic space. While excellent at mapping synonyms and broad intent (e.g., matching "quitting school" to "withdrawal"), dense vectors compress alphanumeric course codes (`CS4032`), fee values (`11,500`), and clause identifiers (`1.21` vs `1.22`) into dense clusters where subtle numerical distinctions are blurred.
+- **Remedy from RAG Lecture**: **Hybrid Search with Reciprocal Rank Fusion (RRF)**. Combine dense semantic embeddings with sparse BM25 keyword matching to boost exact numerical and token matches before passing the top candidates to the generation context.
 
-## 5. recall@5 by question type: where is it worst, and why?
+## 6. EMBED_MODEL Changed on API Only: Guardrail Action
+- **What the system does**: If `EMBED_MODEL` in [k8s/base/configmap.yaml](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/k8s/base/configmap.yaml#L8) is modified and the API is restarted without re-indexing, the readiness probe `/readyz` ([api/app/routes/health.py](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/api/app/routes/health.py#L56-L73)) reads the collection's recorded metadata (`collection.metadata["embed_model"]`). It detects that the index model does not match `settings.embed_model`, logs `ERROR: embedding model mismatch detected`, and returns HTTP 503. The pod is immediately removed from the Service Endpoints ([docs/evidence/04-kubectl-get-endpoints.txt](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/docs/evidence/04-kubectl-get-endpoints.txt)) and serves 0 user queries.
+- **What it would have done without the guardrail**: The API would query Chroma using vector embeddings generated from the new model against an index created with the old model. Vector spaces from different models are incompatible; distance calculations produce random nonsense, causing completely unrelated chunks to be retrieved, leading to hallucinations or total abstention failure.
 
-## 6. EMBED_MODEL changed on the API only: what does your system do?
-
-## 7. The failure that cost us more than an hour
+## 7. The Failure that Cost More than an Hour
+- **Symptoms**: Immediately after deploying our least-privilege NetworkPolicies ([k8s/base/networkpolicy.yaml](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/k8s/base/networkpolicy.yaml#L1-L12)), all API pods failed readiness probes and crashed with `socket.gaierror: [Errno -3] Temporary failure in name resolution` whenever trying to connect to `rahbar-chroma` or `rahbar-redis`.
+- **Wrong Initial Belief**: We initially believed CoreDNS pods were crashing or that Calico CNI had dropped internal cluster routing. We spent 45 minutes restarting CoreDNS and modifying `/etc/resolv.conf`.
+- **The Diagnostic Truth**: Inspecting with `kubectl describe networkpolicy default-deny-all` and running:
+  ```bash
+  kubectl exec -it deploy/rahbar-api -n rahbar -- nc -zv 10.96.0.10 53
+  ```
+  revealed that the deny-by-default egress rule was silently dropping outbound DNS queries to `kube-dns` on port 53.
+- **The Fix**: Added an explicit egress rule allowing UDP and TCP port 53 traffic to the `kube-system` namespace ([k8s/base/networkpolicy.yaml](file:///c:/Users/aliak/OneDrive/Desktop/Assignments/SCD%20A2/k8s/base/networkpolicy.yaml#L15-L35)). DNS immediately resolved, and all pods reached readiness within 4 seconds.
