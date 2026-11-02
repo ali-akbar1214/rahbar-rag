@@ -54,10 +54,10 @@ The API exposes the following endpoints (served internally on port 8000, routed 
 
 | Method | Endpoint | Description | Health / Dependency Rule |
 |---|---|---|---|
-| `GET` | `/healthz` | Process liveness probe. Returns HTTP 200 if ASGI server is responsive. | Strictly independent: touches zero external dependencies. |
-| `GET` | `/readyz` | Cluster readiness probe. Returns HTTP 200 only when Chroma is connected, collection is non-empty, and collection metadata matches `EMBED_MODEL`. | Returns HTTP 503 if dependencies fail or embedding model mismatches. |
-| `GET` | `/metrics` | Prometheus metrics scraping endpoint (request counters, latency histograms). | Internal metric collector. |
-| `POST` | `/api/ask` | Question-answering endpoint. Takes `{"question": "..."}` and returns structured `AskResponse`. | Validates input length (3 to 500 chars), checks semantic cache, queries Chroma, invokes LLM with fallback, and verifies citations. |
+| GET | `/healthz` | Process liveness probe. Returns HTTP 200 if ASGI server is responsive. | Strictly independent: touches zero external dependencies. |
+| GET | `/readyz` | Cluster readiness probe. Returns HTTP 200 only when Chroma is connected, collection is non-empty, and collection metadata matches `EMBED_MODEL`. | Returns HTTP 503 if dependencies fail or embedding model mismatches. |
+| GET | `/metrics` | Prometheus metrics scraping endpoint (request counters, latency histograms). | Internal metric collector. |
+| POST | `/api/ask` | Question-answering endpoint. Takes `{"question": "..."}` and returns structured `AskResponse`. | Validates input length (3 to 500 chars), checks semantic cache, queries Chroma, invokes LLM with fallback, and verifies citations. |
 
 ---
 
