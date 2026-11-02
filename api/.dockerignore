@@ -1,0 +1,17 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.venv
+venv
+.env*
+*-secret.yaml
+*secret*.yaml
+corpus
+eval
+tests
+.pytest_cache
+.mypy_cache
+.ruff_cache
