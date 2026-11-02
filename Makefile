@@ -56,9 +56,15 @@ secret: ## create the LLM key Secret from the LLM_API_KEY variable; never from a
 	kubectl create secret generic rahbar-secret -n $(NS) \
 	  --from-literal=LLM_API_KEY="$$LLM_API_KEY" --dry-run=client -o yaml | kubectl apply -f -
 
-index: ## run the indexer once, from the CronJob's template (needs yours: CronJob reindex)
-	kubectl create job --from=cronjob/reindex reindex-$$(date +%s) -n $(NS)
+index: ## run the indexer once, from the CronJob template
+	kubectl create job --from=cronjob/rahbar-reindex-cronjob reindex-$$(date +%s) -n $(NS)
 	@echo "watch it with: kubectl get jobs -n $(NS) -w"
+
+manifests: ## validate manifests using kubeconform
+	kubectl kustomize k8s/overlays/prod | kubeconform -strict -summary -kubernetes-version 1.30.0
+
+scan: ## scan local api image using trivy
+	trivy image --severity HIGH,CRITICAL rahbar-api:$(TAG)
 
 ask: ## ask through the Ingress: make ask Q="What CGPA puts a student on academic warning?"
 	@curl -s -X POST "http://$(INGRESS_IP)/api/ask" -H "Host: $(HOST)" \
