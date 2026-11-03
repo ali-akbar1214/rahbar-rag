@@ -26,7 +26,8 @@ RUN groupadd -g 1000 appgroup && \
 # Copy installed Python packages from builder, then upgrade pip/setuptools so old dist-info is uninstalled
 COPY --from=builder /install /usr/local
 RUN pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1" && \
-    rm -rf /usr/local/lib/python3.12/ensurepip
+    rm -rf /usr/local/lib/python3.12/ensurepip /usr/share/python-wheels /usr/lib/python3/dist-packages/setuptools* && \
+    find /usr /root -name "*setuptools*.whl" -delete 2>/dev/null || true
 
 # Copy pipeline package code
 COPY pipeline/ ./pipeline/
