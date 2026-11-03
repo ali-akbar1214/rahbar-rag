@@ -23,6 +23,15 @@
 
 ## 2. Threshold Fix and Green CI Reruns
 
-- **Fix**: Restored `RELEVANCE_FLOOR: "0.15"` in `k8s/base/configmap.yaml` so valid grounded chunks pass similarity filtering while unanswerable queries still abstain at `100%`.
-- **Verification**: All 5 required CI checks (`Lint & Style Check`, `Unit Tests & Code Coverage`, `Kubeconform Manifest Validation`, `Build & Trivy Vulnerability Scan`, and `Ephemeral Kind Cluster & E2E Eval Gate`) pass with exit code `0` (`recall@5: 1.0000`, `citation_validity: 1.0000`, `abstention_correctness: 1.0000`).
+- **Fix Commit**: `7b5706c` — restored `RELEVANCE_FLOOR: "0.15"` in `k8s/base/configmap.yaml` so valid grounded chunks pass similarity filtering while unanswerable queries still abstain at `100%`.
+- **Passing Workflow Run**: https://github.com/ali-akbar1214/rahbar-rag/actions/runs/41691981854
+- **Gate Output (`eval/run_eval.py`)**:
+  ```text
+  "recall@3": 1.0,
+  "recall@5": 1.0,
+  "citation_validity": 1.0,
+  "abstention_correctness": 1.0
+  PASS: all evaluation gates passed successfully.
+  ```
+- **Verification**: All 5 required CI checks (`Lint & Style Check`, `Unit Tests & Code Coverage`, `Kubeconform Manifest Validation`, `Build & Trivy Vulnerability Scan`, and `Ephemeral Kind Cluster & E2E Eval Gate`) pass with exit code `0`.
 - **Passing Screenshot**: [`02-blocked-merge-passed.png`](./02-blocked-merge-passed.png)
