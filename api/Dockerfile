@@ -11,19 +11,19 @@ FROM python:3.12-slim AS runner
 
 WORKDIR /app
 
-# Upgrade OS packages and base Python packaging tools to patch fixable CVEs
+# Upgrade OS packages to patch fixable CVEs
 RUN apt-get update && \
     apt-get upgrade -y --no-install-recommends && \
-    rm -rf /var/lib/apt/lists/* && \
-    pip install --no-cache-dir --upgrade pip setuptools && \
-    rm -rf /usr/local/lib/python3.12/ensurepip
+    rm -rf /var/lib/apt/lists/*
 
 # Create unprivileged non-root user
 RUN groupadd -g 1000 appgroup && \
     useradd -u 1000 -g appgroup -s /bin/false -m nonroot
 
-# Copy installed Python packages from builder
+# Copy installed Python packages from builder, then upgrade pip/setuptools so old dist-info is uninstalled
 COPY --from=builder /install /usr/local
+RUN pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1" && \
+    rm -rf /usr/local/lib/python3.12/ensurepip
 
 # Copy application code
 COPY app/ ./app/
