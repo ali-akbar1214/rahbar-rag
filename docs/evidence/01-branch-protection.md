@@ -1,16 +1,19 @@
 # Evidence: GitHub Branch Protection Configuration
-Date: 2026-11-03
-Repository: rahbar-grounded-rag
 
-Branch protection rules applied on `main`:
-- Require a pull request before merging: ENABLED
-  - Required approvals: 1
-  - Dismiss stale pull request approvals when new commits are pushed: ENABLED
-  - Require review from Code Owners: ENABLED
-- Require status checks to pass before merging: ENABLED
-  - Required check: `lint`
-  - Required check: `test` (coverage >= 60%)
-  - Required check: `manifests` (kubeconform validation)
-  - Required check: `e2e-eval` (evaluation regression gate)
-- Do not allow bypassing the above settings: ENABLED
-- Restrict who can push to matching branches: ENABLED (No direct pushes to main)
+- **Date**: 2026-11-03
+- **Repository**: https://github.com/ali-akbar1214/rahbar-rag
+- **Protected Branch**: `main`
+
+## Enforced Protection Rules (`GET /repos/ali-akbar1214/rahbar-rag/branches/main/protection`)
+
+- **Require a pull request before merging**: `ENABLED`
+  - Required approving reviews: `1` (`required_approving_review_count: 1`)
+  - Dismiss stale pull request approvals when new commits are pushed: `ENABLED` (`dismiss_stale_reviews: true`)
+- **Require status checks to pass before merging**: `ENABLED` (`strict: true`)
+  - `Lint & Style Check`
+  - `Unit Tests & Code Coverage`
+  - `Kubeconform Manifest Validation`
+  - `Build & Trivy Vulnerability Scan`
+  - `Ephemeral Kind Cluster & E2E Eval Gate`
+- **Do not allow bypassing the above settings (`enforce_admins`)**: `ENABLED` (`enforce_admins.enabled: true`)
+- **Allow force pushes / deletions**: `DISABLED` (`allow_force_pushes: false`, `allow_deletions: false`)
