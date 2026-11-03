@@ -62,6 +62,7 @@ async def request_context(request: Request, call_next):  # type: ignore[no-untyp
         elapsed = time.perf_counter() - start
         metrics.REQUESTS.labels(path=path, status=str(status)).inc()
         metrics.LATENCY.labels(path=path).observe(elapsed)
+        metrics.REQUEST_LATENCY.labels(path=path).observe(elapsed)
         if path not in ("/healthz", "/readyz", "/metrics"):
             log.info("request", extra={"path": path, "status": status,
                                        "ms": round(elapsed * 1000, 1)})

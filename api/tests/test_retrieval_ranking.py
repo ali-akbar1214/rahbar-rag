@@ -28,9 +28,10 @@ class MockChromaClient:
 
 
 def test_chroma_retriever_filters_superseded_and_converts_similarity(monkeypatch: pytest.MonkeyPatch) -> None:
+    import chromadb
+    monkeypatch.setattr(chromadb, "HttpClient", lambda **kwargs: MockChromaClient())
     settings = get_settings()
     retriever = ChromaRetriever(settings)
-    retriever.client = MockChromaClient()
 
     passages = retriever.retrieve("What is the rule?", k=5)
     # c2 is superseded -> excluded
