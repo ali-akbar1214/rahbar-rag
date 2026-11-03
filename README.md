@@ -5,7 +5,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-74%25-brightgreen.svg)](https://github.com/ali-akbar1214/rahbar-rag)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**Course**: CS4032 Software Construction & Development — Assignment 02  
+**Course**: SE3005 Software Construction & Development — Assignment 02  
 **Team Members**:
 - **Syed Ali Akbar Naqvi** (24I-3079) — `sy.aliakbarnaqvi@gmail.com`
 - **Huzaifa Ali** (24I-3114) — `huzaifa.ali@nu.edu.pk`
