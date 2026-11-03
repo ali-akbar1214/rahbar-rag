@@ -1,5 +1,5 @@
 # Stage 1: Build & asset preparation
-FROM alpine:3.20 AS builder
+FROM alpine:3.24 AS builder
 
 WORKDIR /src
 COPY index.html ./
@@ -7,7 +7,7 @@ COPY index.html ./
 RUN test -f index.html
 
 # Stage 2: Unprivileged Nginx runtime
-FROM nginxinc/nginx-unprivileged:1.27-alpine AS runner
+FROM nginxinc/nginx-unprivileged:1.31.7-alpine AS runner
 
 USER root
 RUN apk upgrade --no-cache

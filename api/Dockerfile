@@ -21,11 +21,11 @@ RUN apt-get update && \
 RUN groupadd -g 1000 appgroup && \
     useradd -u 1000 -g appgroup -s /bin/false -m nonroot
 
-# Copy installed Python packages from builder, upgrade pip/setuptools, and purge any bundled old setuptools wheels/metadata
+# Copy installed Python packages from builder, upgrade setuptools, and remove pip/ensurepip from runtime image
 COPY --from=builder /install /usr/local
-RUN pip install --no-cache-dir --upgrade pip "setuptools>=78.1.1" && \
-    rm -rf /usr/local/lib/python3.12/ensurepip /usr/lib/python3.12/ensurepip /usr/share/python-wheels && \
-    python3 -c 'import pathlib, shutil, zipfile; roots = [pathlib.Path(r) for r in ("/usr","/var","/opt","/root") if pathlib.Path(r).exists()]; [shutil.rmtree(d, ignore_errors=True) for r in roots for d in list(r.rglob("setuptools*")) if d.is_dir() and d.suffix in (".dist-info",".egg-info") and not d.name.startswith("setuptools-78.") and not d.name.startswith("setuptools-79.") and not d.name.startswith("setuptools-8")]; [f.unlink(missing_ok=True) for r in roots for f in list(r.rglob("*setuptools*")) if f.is_file() and ("70." in f.name or (f.suffix == ".egg-info" and "Version: 70." in f.read_text(errors="ignore")))]; [p.unlink(missing_ok=True) for r in roots for p in list(r.rglob("*")) if p.is_file() and p.suffix in (".whl",".zip",".egg") and zipfile.is_zipfile(p) and any("setuptools-70." in n for n in zipfile.ZipFile(p).namelist())]'
+RUN pip install --no-cache-dir --upgrade "setuptools>=78.1.1" && \
+    python3 -m pip uninstall -y pip && \
+    rm -rf /usr/local/lib/python3.12/ensurepip /usr/lib/python3.12/ensurepip /usr/share/python-wheels
 
 # Copy application code
 COPY app/ ./app/
