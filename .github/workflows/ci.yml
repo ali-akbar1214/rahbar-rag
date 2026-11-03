@@ -3,8 +3,10 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [dev]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -187,14 +189,43 @@ jobs:
           kubectl wait --for=condition=complete job/rahbar-indexer-job -n rahbar --timeout=180s
           kubectl logs job/rahbar-indexer-job -n rahbar
 
-      - name: Deploy API and UI and wait for rollout
+      - name: Deploy Ingress controller, API, UI, and Ingress
         run: |
+          kubectl label nodes --all ingress-ready=true --overwrite
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+          kubectl wait -n ingress-nginx --for=condition=complete job/ingress-nginx-admission-patch --timeout=120s || true
+          kubectl wait -n ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=180s
           sed "s|aliakbar1214/rahbar-api:v1.0.0|aliakbar1214/rahbar-api:${{ github.sha }}|g" \
             k8s/base/api-deployment.yaml | kubectl apply -f -
           sed "s|aliakbar1214/rahbar-ui:v1.0.0|aliakbar1214/rahbar-ui:${{ github.sha }}|g" \
             k8s/base/ui-deployment.yaml | kubectl apply -f -
+          for i in $(seq 1 5); do
+            kubectl apply -f k8s/base/ingress.yaml && break
+            sleep 3
+          done
           kubectl rollout status deployment/rahbar-api -n rahbar --timeout=180s
           kubectl rollout status deployment/rahbar-ui -n rahbar --timeout=120s
+
+      - name: Smoke test UI and API through Kubernetes Ingress
+        run: |
+          kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8088:80 >/tmp/pf-ing.log 2>&1 &
+          ING_PID=$!
+          for i in $(seq 1 20); do
+            if curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/ >/dev/null; then break; fi
+            sleep 1
+          done
+          UI_HTML="$(curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/)"
+          grep -q "<title>RAHBAR</title>" <<< "$UI_HTML"
+          ASK_JSON="$(curl -sf -X POST http://127.0.0.1:8088/api/ask \
+            -H "Host: rahbar.local" \
+            -H "Content-Type: application/json" \
+            -d '{"question": "When is a student placed on academic warning?"}')"
+          echo "$ASK_JSON"
+          grep -q '"answered_from_context"' <<< "$ASK_JSON"
+          kill $ING_PID || true
 
       - name: Run E2E evaluation gate
         run: |

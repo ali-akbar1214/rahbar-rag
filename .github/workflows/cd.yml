@@ -97,7 +97,9 @@ jobs:
       - name: Deploy SHA-tagged manifests and verify rollout
         run: |
           IMG_USER="${{ secrets.DOCKERHUB_USERNAME || 'aliakbar1214' }}"
+          kubectl label nodes --all ingress-ready=true --overwrite
           kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+          kubectl wait -n ingress-nginx --for=condition=complete job/ingress-nginx-admission-patch --timeout=120s || true
           kubectl wait --namespace ingress-nginx \
             --for=condition=ready pod \
             --selector=app.kubernetes.io/component=controller \
@@ -123,7 +125,10 @@ jobs:
             k8s/base/api-deployment.yaml | kubectl apply -f -
           sed "s|aliakbar1214/rahbar-ui:v1.0.0|${IMG_USER}/rahbar-ui:${{ github.sha }}|g" \
             k8s/base/ui-deployment.yaml | kubectl apply -f -
-          kubectl apply -f k8s/base/ingress.yaml
+          for i in $(seq 1 5); do
+            kubectl apply -f k8s/base/ingress.yaml && break
+            sleep 3
+          done
           kubectl rollout status deployment/rahbar-api -n rahbar --timeout=180s
           kubectl rollout status deployment/rahbar-ui -n rahbar --timeout=120s
 
@@ -135,9 +140,19 @@ jobs:
             if curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/ >/dev/null; then break; fi
             sleep 1
           done
-          curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/ | head -n 5
-          curl -sf -X POST http://127.0.0.1:8088/api/ask \
+          UI_HTML="$(curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/)"
+          grep -q "<title>RAHBAR</title>" <<< "$UI_HTML"
+          ASK_JSON="$(curl -sf -X POST http://127.0.0.1:8088/api/ask \
             -H "Host: rahbar.local" \
             -H "Content-Type: application/json" \
-            -d '{"question": "When is a student placed on academic warning?"}'
+            -d '{"question": "When is a student placed on academic warning?"}')"
+          echo "$ASK_JSON"
+          grep -q '"answered_from_context"' <<< "$ASK_JSON"
           kill $PF_PID || true
+
+      - name: Dump cluster diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods,jobs,svc,ingress -A -o wide || true
+          kubectl describe pods -n rahbar || true
+          kubectl logs -l app=rahbar -n rahbar --tail=50 || true
