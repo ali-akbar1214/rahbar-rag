@@ -100,10 +100,30 @@ jobs:
           docker build -t rahbar-indexer:${{ github.sha }} -f indexer/Dockerfile indexer/
           docker build -t rahbar-ui:${{ github.sha }} -f ui/Dockerfile ui/
 
-      - name: Run Trivy vulnerability scan
+      - name: Run Trivy vulnerability scan (api)
         uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: "rahbar-api:${{ github.sha }}"
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
+
+      - name: Run Trivy vulnerability scan (indexer)
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: "rahbar-indexer:${{ github.sha }}"
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL,HIGH"
+
+      - name: Run Trivy vulnerability scan (ui)
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: "rahbar-ui:${{ github.sha }}"
           format: "table"
           exit-code: "1"
           ignore-unfixed: true
