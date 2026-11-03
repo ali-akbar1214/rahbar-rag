@@ -97,7 +97,13 @@ jobs:
       - name: Deploy SHA-tagged manifests and verify rollout
         run: |
           IMG_USER="${{ secrets.DOCKERHUB_USERNAME || 'aliakbar1214' }}"
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=180s
           kubectl apply -f k8s/base/namespace.yaml
+          kubectl apply -f k8s/base/serviceaccounts.yaml
           kubectl apply -f k8s/base/configmap.yaml
           kubectl patch configmap rahbar-config -n rahbar --type merge \
             -p '{"data":{"LLM_PROVIDER":"stub","HOSTED_BASE_URL":""}}'
@@ -117,16 +123,21 @@ jobs:
             k8s/base/api-deployment.yaml | kubectl apply -f -
           sed "s|aliakbar1214/rahbar-ui:v1.0.0|${IMG_USER}/rahbar-ui:${{ github.sha }}|g" \
             k8s/base/ui-deployment.yaml | kubectl apply -f -
+          kubectl apply -f k8s/base/ingress.yaml
           kubectl rollout status deployment/rahbar-api -n rahbar --timeout=180s
           kubectl rollout status deployment/rahbar-ui -n rahbar --timeout=120s
 
-      - name: Smoke test API question endpoint
+      - name: Smoke test UI and API through Kubernetes Ingress
         run: |
-          kubectl port-forward svc/rahbar-api 8000:8000 -n rahbar >/tmp/pf.log 2>&1 &
+          kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8088:80 >/tmp/pf-ing.log 2>&1 &
           PF_PID=$!
-          sleep 4
-          curl -sf http://127.0.0.1:8000/readyz
-          curl -sf -X POST http://127.0.0.1:8000/api/ask \
+          for i in $(seq 1 20); do
+            if curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/ | head -n 5
+          curl -sf -X POST http://127.0.0.1:8088/api/ask \
+            -H "Host: rahbar.local" \
             -H "Content-Type: application/json" \
             -d '{"question": "When is a student placed on academic warning?"}'
           kill $PF_PID || true

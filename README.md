@@ -46,6 +46,10 @@ graph TD
     HPA[Horizontal Pod Autoscaler 3-8 Pods] -.->|Monitor CPU| API
 ```
 
+**Why ChromaDB is a `StatefulSet` (not a `Deployment`)**: Unlike stateless `rahbar-api` replicas, ChromaDB maintains an embedded SQLite + HNSW segment store on disk that does not support concurrent multi-pod writers. Using a `StatefulSet` (`rahbar-chroma-0`) with `volumeClaimTemplates` (`chroma-data`, `ReadWriteOnce`) provides a stable network identity and deterministic 1-to-1 PVC reattachment across pod restarts or node rescheduling without risking lock corruption during rolling replacements (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ADR 0001](docs/adr/0001-indexer-as-job.md)).
+
+**Corpus Acquisition & Integrity**: Because the repository is public, third-party FAST-NUCES PDFs are not committed to Git (`corpus/raw/` is `.gitignore`d). Instead, [corpus/MANIFEST.md](corpus/MANIFEST.md) records every public source URL, byte size, and SHA-256 checksum, and [corpus/fetch.py](corpus/fetch.py) downloads and verifies (`python corpus/fetch.py --verify`) exact byte parity before indexing.
+
 ---
 
 ## 3. API Specification
@@ -77,18 +81,20 @@ minikube addons enable metrics-server
 minikube addons enable ingress
 ```
 
-### 2. Configure Credentials
-Create the Kubernetes Secret containing the LLM API key directly from the command line:
+### 2. Fetch Corpus & Configure Credentials
+Fetch the official FAST-NUCES policy corpus (and verify SHA-256 checksums against `corpus/MANIFEST.md`), then create the Kubernetes Secret from the command line:
 ```bash
-kubectl create namespace rahbar
+python corpus/fetch.py && python corpus/fetch.py --verify
+kubectl apply -f k8s/base/namespace.yaml
 kubectl create secret generic rahbar-secret -n rahbar --from-literal=LLM_API_KEY="your-llm-api-key"
 ```
 
 ### 3. Deploy the Stack in Exact Apply Order
-Apply base infrastructure, data tiers, batch ingestion, and serving workloads:
+Apply base infrastructure, dedicated ServiceAccounts, data tiers, batch ingestion, and serving workloads:
 ```bash
-# 1. Namespace & Configuration
+# 1. Namespace, Workload ServiceAccounts & Configuration
 kubectl apply -f k8s/base/namespace.yaml
+kubectl apply -f k8s/base/serviceaccounts.yaml
 kubectl apply -f k8s/base/configmap.yaml
 
 # 2. Network Security Policies

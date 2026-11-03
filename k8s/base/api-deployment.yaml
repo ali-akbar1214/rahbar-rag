@@ -24,6 +24,7 @@ spec:
         component: api
     spec:
       terminationGracePeriodSeconds: 30
+      serviceAccountName: rahbar-api-sa
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

@@ -105,7 +105,7 @@ jobs:
         with:
           image-ref: "rahbar-api:${{ github.sha }}"
           format: "table"
-          exit-code: "0"
+          exit-code: "1"
           ignore-unfixed: true
           vuln-type: "os,library"
           severity: "CRITICAL,HIGH"
@@ -146,6 +146,7 @@ jobs:
       - name: Deploy namespace, ConfigMap, Secret, Chroma, and Redis
         run: |
           kubectl apply -f k8s/base/namespace.yaml
+          kubectl apply -f k8s/base/serviceaccounts.yaml
           kubectl apply -f k8s/base/configmap.yaml
           kubectl patch configmap rahbar-config -n rahbar --type merge \
             -p '{"data":{"LLM_PROVIDER":"stub","HOSTED_BASE_URL":""}}'

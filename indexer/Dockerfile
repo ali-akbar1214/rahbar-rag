@@ -11,12 +11,14 @@ FROM python:3.12-slim AS runner
 
 WORKDIR /app
 
-# Install system dependencies for OCR and PDF rendering
+# Install system dependencies for OCR and PDF rendering and apply OS security upgrades
 RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends \
         tesseract-ocr \
         poppler-utils && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir --upgrade pip setuptools
 
 # Create unprivileged non-root user
 RUN groupadd -g 1000 appgroup && \

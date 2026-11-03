@@ -16,7 +16,7 @@ documents:
     notes: Active official policy with 53 pages of numbered clauses (attendance 1.21, probation warning 5.4, prerequisite 4.2).
 
   - name: Prospectus 2026 - Academic Rules and Regulations
-    url: https://nu.edu.pk/Admissions/ProspectusUpload/Academic-Rules-and-Regulations.pdf
+    url: https://www.nu.edu.pk/Admissions/ProspectusUpload/Academic Rules and Regulations.pdf
     doc_version: "2026"
     superseded: false
     notes: Summary version of current academic rules with condensed clause numbering.
@@ -30,13 +30,13 @@ documents:
 
   # Property 4: tables, and versions over time
   - name: Annual Report 2019-20
-    url: https://nu.edu.pk/public/downloads/AnnualReportForm/Annual-Report-2019-20.pdf
+    url: https://nu.edu.pk/public/downloads/AnnualReportForm/Annual Report 2019-20.pdf
     doc_version: "2019-20"
-    superseded: false
-    notes: Tabular reporting of campus graduation rates, research funding, and faculty allocation.
+    superseded: true
+    notes: Superseded edition of institutional annual report containing historical campus graduation rates and faculty allocation tables.
 
   - name: Annual Report 2023-24
-    url: https://nu.edu.pk/public/downloads/AnnualReportForm/Annual-Report-2023-24.pdf
+    url: https://nu.edu.pk/public/downloads/AnnualReportForm/Annual Report 2023-24.pdf
     doc_version: "2023-24"
     superseded: false
     notes: Tabular institutional dataset containing multi-column enrollment and grade distribution metrics.

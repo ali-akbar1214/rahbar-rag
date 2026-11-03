@@ -36,6 +36,7 @@ spec:
         component: redis
     spec:
       terminationGracePeriodSeconds: 30
+      serviceAccountName: rahbar-redis-sa
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

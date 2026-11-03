@@ -21,6 +21,7 @@ spec:
             component: indexer
         spec:
           restartPolicy: OnFailure
+          serviceAccountName: rahbar-indexer-sa
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
@@ -53,3 +54,12 @@ spec:
                 capabilities:
                   drop:
                     - ALL
+              volumeMounts:
+                - name: corpus-volume
+                  mountPath: /corpus
+                  readOnly: true
+          volumes:
+            - name: corpus-volume
+              configMap:
+                name: rahbar-corpus-files
+                optional: true

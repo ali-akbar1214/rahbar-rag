@@ -10,6 +10,7 @@ RUN test -f index.html
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runner
 
 USER root
+RUN apk upgrade --no-cache
 COPY --from=builder /src/index.html /usr/share/nginx/html/index.html
 COPY nginx.conf /etc/nginx/nginx.conf
 

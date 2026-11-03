@@ -20,12 +20,14 @@ We chose a **Semantic Cache backed by Redis** (with an in-memory fallback for lo
    - Context-dependent follow-up questions are bypassed.
 
 ## Options considered
-1. **Exact String Hash Caching (MD5 / SHA256 of question text)**:
+1. **Second ChromaDB Collection (`rahbar_cache`)**:
+   - *Why rejected*: Writing to ChromaDB from all 3 `rahbar-api` serving replicas violates our sole-writer architecture (ADR 0001), introduces multi-replica SQLite/HNSW write-lock contention on every cache miss, and lacks native per-key TTL (`EXPIRE`) and `allkeys-lru` memory eviction.
+2. **Exact String Hash Caching (MD5 / SHA256 of question text)**:
    - *Why rejected*: Extremely low hit rate (< 5%) because minor punctuation, casing, or synonym differences miss the cache entirely.
-2. **In-Memory Cache in API Pod Memory (LRU Cache)**:
+3. **In-Memory Cache in API Pod Memory (LRU Cache)**:
    - *Why rejected*: With 3 API replicas, memory is fragmented across pods without cache sharing, and cache entries are lost on pod restart/rescheduling.
-3. **Redis Centralized Semantic Cache (Chosen)**:
-   - *Why chosen*: Shared state across all API replicas, persistent, and fast vector comparison with TTL support.
+4. **Redis Centralized Semantic Cache with PVC (Chosen)**:
+   - *Why chosen*: Shared state across all API replicas, persistent via `PersistentVolumeClaim` (`cache-data`), safe concurrent writes from 3–8 API replicas without touching ChromaDB's single-writer index, and built-in TTL + `allkeys-lru` eviction.
 
 ## Consequences
 - **Positive**: Near-instantaneous response times (< 25ms) for recurring student queries, saving API quota and compute.

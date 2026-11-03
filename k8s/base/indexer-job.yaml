@@ -16,6 +16,7 @@ spec:
         component: indexer
     spec:
       restartPolicy: OnFailure
+      serviceAccountName: rahbar-indexer-sa
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

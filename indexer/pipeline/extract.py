@@ -133,9 +133,19 @@ def _extract_html_file(file_path: Path, source_name: str) -> list[Page]:
     raw = file_path.read_text(encoding="utf-8", errors="replace")
     clean_text = re.sub(r"<script.*?</script>", "", raw, flags=re.DOTALL | re.IGNORECASE)
     clean_text = re.sub(r"<style.*?</style>", "", clean_text, flags=re.DOTALL | re.IGNORECASE)
+    clean_text = re.sub(
+        r"<h[1-6][^>]*>(.*?)</h[1-6]>",
+        lambda m: "\n\n## " + re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", m.group(1))).strip() + "\n\n",
+        clean_text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    clean_text = re.sub(r"</tr\s*>", "\n", clean_text, flags=re.IGNORECASE)
+    clean_text = re.sub(r"</t[dh]\s*>", " | ", clean_text, flags=re.IGNORECASE)
+    clean_text = re.sub(r"<(?:br|p|/p|/div|/li)\b[^>]*>", "\n", clean_text, flags=re.IGNORECASE)
     clean_text = re.sub(r"<[^>]+>", " ", clean_text)
-    clean_text = re.sub(r"\s+", " ", clean_text).strip()
-    return [Page(source=source_name, page=1, text=clean_text, ocr=False)]
+    lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in clean_text.splitlines()]
+    normalized = re.sub(r"\n{3,}", "\n\n", "\n".join(ln for ln in lines if ln)).strip()
+    return [Page(source=source_name, page=1, text=normalized, ocr=False)]
 
 
 def _format_table(table_rows: list[list[str | None]]) -> str:

@@ -11,6 +11,12 @@ FROM python:3.12-slim AS runner
 
 WORKDIR /app
 
+# Upgrade OS packages and base Python packaging tools to patch fixable CVEs
+RUN apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip install --no-cache-dir --upgrade pip setuptools
+
 # Create unprivileged non-root user
 RUN groupadd -g 1000 appgroup && \
     useradd -u 1000 -g appgroup -s /bin/false -m nonroot

@@ -20,6 +20,7 @@ spec:
         component: chroma
     spec:
       terminationGracePeriodSeconds: 30
+      serviceAccountName: rahbar-chroma-sa
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

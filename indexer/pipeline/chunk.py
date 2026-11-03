@@ -7,7 +7,7 @@ import re
 from .models import Chunk, Document
 
 HEADING_PATTERN = re.compile(
-    r"^(?:#{1,6}\s+|(?:\d+\.)+\d*\s+|[A-Z0-9\.\s]{3,35}\b(?:Policy|Regulation|Rules|Section|Clause)\b|Clause\s+\d+[\.\d]*).*",
+    r"^(?:#{1,6}\s+\S.*|\d+\.\s+[A-Z][A-Za-z0-9\s,&'()-]{2,65}|(?:Section|Chapter|Clause)\s+\d+[\.\d]*.*|[A-Z][A-Za-z\s,&'()-]{3,50}\b(?:Policy|Regulations?|Rules|Requirements?|Calculation|Criteria|Warning|Registration|Assessment|Fees?|Grading)\b[A-Za-z0-9\s,&'().-]*)$",
     re.MULTILINE,
 )
 
@@ -29,8 +29,24 @@ def chunk(doc: Document, size: int, overlap: int) -> list[Chunk]:
         if not text:
             continue
 
+        # Promote standalone heading lines into paragraph boundaries so PDF single-newline pages split cleanly
+        expanded_lines: list[str] = []
+        for raw_ln in text.splitlines():
+            s_ln = raw_ln.strip()
+            if (
+                s_ln
+                and len(s_ln) <= 80
+                and (s_ln.startswith("#") or not s_ln.endswith((".", ",", ";", ":")))
+                and HEADING_PATTERN.match(s_ln)
+            ):
+                expanded_lines.append("")
+                expanded_lines.append(s_ln)
+                expanded_lines.append("")
+            else:
+                expanded_lines.append(raw_ln)
+
         # Split page text into structural paragraph blocks
-        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", "\n".join(expanded_lines)) if p.strip()]
 
         current_buffer = ""
 
