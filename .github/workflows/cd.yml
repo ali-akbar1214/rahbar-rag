@@ -136,16 +136,20 @@ jobs:
         run: |
           kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8088:80 >/tmp/pf-ing.log 2>&1 &
           PF_PID=$!
-          for i in $(seq 1 20); do
-            if curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/ >/dev/null; then break; fi
-            sleep 1
+          ASK_JSON=""
+          for i in $(seq 1 30); do
+            if curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/ >/dev/null; then
+              if ASK_JSON="$(curl -sf -X POST http://127.0.0.1:8088/api/ask \
+                -H "Host: rahbar.local" \
+                -H "Content-Type: application/json" \
+                -d '{"question": "When is a student placed on academic warning?"}')"; then
+                break
+              fi
+            fi
+            sleep 2
           done
           UI_HTML="$(curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/)"
           grep -q "<title>RAHBAR</title>" <<< "$UI_HTML"
-          ASK_JSON="$(curl -sf -X POST http://127.0.0.1:8088/api/ask \
-            -H "Host: rahbar.local" \
-            -H "Content-Type: application/json" \
-            -d '{"question": "When is a student placed on academic warning?"}')"
           echo "$ASK_JSON"
           grep -q '"answered_from_context"' <<< "$ASK_JSON"
           kill $PF_PID || true
