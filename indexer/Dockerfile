@@ -18,7 +18,8 @@ RUN apt-get update && \
         tesseract-ocr \
         poppler-utils && \
     rm -rf /var/lib/apt/lists/* && \
-    pip install --no-cache-dir --upgrade pip setuptools
+    pip install --no-cache-dir --upgrade pip setuptools && \
+    rm -rf /usr/local/lib/python3.12/ensurepip
 
 # Create unprivileged non-root user
 RUN groupadd -g 1000 appgroup && \

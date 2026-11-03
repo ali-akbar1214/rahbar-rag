@@ -15,7 +15,8 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get upgrade -y --no-install-recommends && \
     rm -rf /var/lib/apt/lists/* && \
-    pip install --no-cache-dir --upgrade pip setuptools
+    pip install --no-cache-dir --upgrade pip setuptools && \
+    rm -rf /usr/local/lib/python3.12/ensurepip
 
 # Create unprivileged non-root user
 RUN groupadd -g 1000 appgroup && \
