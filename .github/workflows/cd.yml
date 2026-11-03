@@ -8,19 +8,34 @@ permissions:
   contents: read
 
 jobs:
-  ci-gate:
-    name: Verify CI Gate
+  test:
+    name: Run Tests Before Publish
     runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
-      - name: Verify pipeline readiness
-        run: echo "CI gate prerequisites satisfied."
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies and run pytest
+        env:
+          PYTHONPATH: ".:api:indexer"
+        run: |
+          pip install -r api/requirements.txt -r api/requirements-dev.txt
+          pip install -r indexer/requirements.txt -r indexer/requirements-dev.txt
+          pip install pytest-cov
+          pytest --cov=app --cov-fail-under=60 api/tests indexer/tests
 
   publish:
     name: Build & Publish SHA-Tagged Images
     runs-on: ubuntu-24.04
-    needs: [ci-gate]
+    needs: [test]
     permissions:
       contents: read
       packages: write
@@ -44,7 +59,7 @@ jobs:
           file: api/Dockerfile
           push: true
           tags: |
-            aliakbar1214/rahbar-api:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME || 'aliakbar1214' }}/rahbar-api:${{ github.sha }}
 
       - name: Build and push Indexer image
         uses: docker/build-push-action@v5
@@ -53,7 +68,7 @@ jobs:
           file: indexer/Dockerfile
           push: true
           tags: |
-            aliakbar1214/rahbar-indexer:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME || 'aliakbar1214' }}/rahbar-indexer:${{ github.sha }}
 
       - name: Build and push UI image
         uses: docker/build-push-action@v5
@@ -62,10 +77,10 @@ jobs:
           file: ui/Dockerfile
           push: true
           tags: |
-            aliakbar1214/rahbar-ui:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME || 'aliakbar1214' }}/rahbar-ui:${{ github.sha }}
 
   deploy:
-    name: Deploy to Kubernetes Cluster
+    name: Deploy SHA-Tagged Stack & Smoke Test
     runs-on: ubuntu-24.04
     needs: [publish]
     permissions:
@@ -74,19 +89,45 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Kubeconfig
-        run: |
-          mkdir -p ~/.kube
-          echo "${{ secrets.KUBECONFIG_DATA }}" | base64 -d > ~/.kube/config || true
+      - name: Create ephemeral kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: rahbar-cd
+          version: v0.23.0
 
-      - name: Apply Kustomize Overlay
+      - name: Deploy SHA-tagged manifests and verify rollout
         run: |
-          kubectl apply -k k8s/overlays/prod || true
+          IMG_USER="${{ secrets.DOCKERHUB_USERNAME || 'aliakbar1214' }}"
+          kubectl apply -f k8s/base/namespace.yaml
+          kubectl apply -f k8s/base/configmap.yaml
+          kubectl patch configmap rahbar-config -n rahbar --type merge \
+            -p '{"data":{"LLM_PROVIDER":"stub","HOSTED_BASE_URL":""}}'
+          kubectl create configmap rahbar-corpus-files -n rahbar \
+            --from-file=eval/fixtures/academic-rules-2023.md \
+            --from-file=eval/fixtures/academic-rules-2026.md \
+            --from-file=eval/fixtures/fees-2026.md
+          kubectl create secret generic rahbar-secret -n rahbar --from-literal=LLM_API_KEY="cd-smoke"
+          kubectl apply -f k8s/base/chroma-statefulset.yaml
+          kubectl apply -f k8s/base/redis.yaml
+          kubectl rollout status statefulset/rahbar-chroma -n rahbar --timeout=180s
+          kubectl rollout status deployment/rahbar-redis -n rahbar --timeout=120s
+          sed "s|aliakbar1214/rahbar-indexer:v1.0.0|${IMG_USER}/rahbar-indexer:${{ github.sha }}|g" \
+            k8s/base/indexer-job.yaml | kubectl apply -f -
+          kubectl wait --for=condition=complete job/rahbar-indexer-job -n rahbar --timeout=180s
+          sed "s|aliakbar1214/rahbar-api:v1.0.0|${IMG_USER}/rahbar-api:${{ github.sha }}|g" \
+            k8s/base/api-deployment.yaml | kubectl apply -f -
+          sed "s|aliakbar1214/rahbar-ui:v1.0.0|${IMG_USER}/rahbar-ui:${{ github.sha }}|g" \
+            k8s/base/ui-deployment.yaml | kubectl apply -f -
+          kubectl rollout status deployment/rahbar-api -n rahbar --timeout=180s
+          kubectl rollout status deployment/rahbar-ui -n rahbar --timeout=120s
 
-      - name: Wait for API Rollout Status
+      - name: Smoke test API question endpoint
         run: |
-          kubectl rollout status deployment/rahbar-api -n rahbar --timeout=180s || true
-
-      - name: Wait for UI Rollout Status
-        run: |
-          kubectl rollout status deployment/rahbar-ui -n rahbar --timeout=120s || true
+          kubectl port-forward svc/rahbar-api 8000:8000 -n rahbar >/tmp/pf.log 2>&1 &
+          PF_PID=$!
+          sleep 4
+          curl -sf http://127.0.0.1:8000/readyz
+          curl -sf -X POST http://127.0.0.1:8000/api/ask \
+            -H "Content-Type: application/json" \
+            -d '{"question": "When is a student placed on academic warning?"}'
+          kill $PF_PID || true

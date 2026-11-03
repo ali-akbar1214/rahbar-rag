@@ -33,13 +33,16 @@ def chunk(doc: Document, size: int, overlap: int) -> list[Chunk]:
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
 
         current_buffer = ""
-        current_sentences: list[str] = []
 
         for para in paragraphs:
             # Check if this paragraph starts with or is a section/clause heading
-            heading_match = HEADING_PATTERN.match(para)
-            if heading_match:
-                first_line = para.splitlines()[0].strip()
+            first_line = para.splitlines()[0].strip()
+            is_heading = (
+                bool(HEADING_PATTERN.match(first_line))
+                and len(first_line) <= 80
+                and (first_line.startswith("#") or not first_line.endswith("."))
+            )
+            if is_heading:
                 # If buffer is non-empty, flush it before changing section
                 if current_buffer:
                     chunk_counter += 1

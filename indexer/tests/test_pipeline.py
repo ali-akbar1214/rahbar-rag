@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from pipeline.chunk import chunk
 from pipeline.clean import clean
 from pipeline.config import get_settings
-from pipeline.embed import _deterministic_vector, embed
-from pipeline.extract import extract
+from pipeline.embed import embed
 from pipeline.models import Document, Page
 from pipeline.store import store
 

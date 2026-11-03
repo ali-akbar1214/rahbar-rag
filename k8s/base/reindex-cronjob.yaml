@@ -28,7 +28,7 @@ spec:
             fsGroup: 1000
           containers:
             - name: indexer
-              image: aliakbar1214/rahbar-indexer:latest
+              image: aliakbar1214/rahbar-indexer:v1.0.0
               imagePullPolicy: IfNotPresent
               envFrom:
                 - configMapRef:

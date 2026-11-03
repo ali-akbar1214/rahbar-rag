@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from eval.run_eval import citation_validity, gate, recall_at_k, summarise
+from eval.run_eval import citation_validity, gate, recall_at_k  # noqa: E402
 
 
 def test_recall_at_k_exact_match() -> None:

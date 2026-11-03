@@ -32,9 +32,8 @@ def validate_citations(answer: Answer, passages: list[Passage]) -> Answer:
             confidence=answer.confidence,
         )
 
-    # Valid (source, section) pairs from actual retrieval
+    # Valid sources from actual retrieval
     valid_sources = {p.source for p in passages}
-    valid_sections = {(p.source, p.section) for p in passages}
 
     filtered_citations: list[Citation] = []
     for c in answer.citations:

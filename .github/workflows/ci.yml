@@ -27,15 +27,18 @@ jobs:
 
       - name: Install linters
         run: |
-          pip install ruff==0.8.2 mypy==1.13.0
+          pip install ruff==0.11.8 mypy==1.15.0 types-PyYAML
+          pip install -r api/requirements.txt -r indexer/requirements.txt
 
       - name: Run Ruff Linter
         run: |
-          ruff check api/ indexer/ eval/
+          ruff check api/ indexer/ eval/ corpus/
 
       - name: Run Mypy Type Checker
         run: |
-          mypy --ignore-missing-imports api/app indexer/pipeline eval/run_eval.py
+          (cd api && mypy --ignore-missing-imports app)
+          (cd indexer && mypy --ignore-missing-imports pipeline)
+          mypy --ignore-missing-imports eval/run_eval.py
 
   test:
     name: Unit Tests & Code Coverage
@@ -56,8 +59,11 @@ jobs:
         run: |
           pip install -r api/requirements.txt -r api/requirements-dev.txt
           pip install -r indexer/requirements.txt -r indexer/requirements-dev.txt
+          pip install pytest-cov
 
       - name: Run pytest with 60% coverage threshold
+        env:
+          PYTHONPATH: ".:api:indexer"
         run: |
           pytest --cov=app --cov-report=term-missing --cov-fail-under=60 api/tests indexer/tests
 
@@ -70,17 +76,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Kustomize & Kubeconform
+      - name: Set up Kubeconform
         run: |
-          curl -s https://raw.githubusercontent.com/yannh/kubeconform/master/scripts/install.sh | bash
-          sudo mv bin/kubeconform /usr/local/bin/
+          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz
+          sudo mv kubeconform /usr/local/bin/
 
       - name: Validate Kubernetes manifests with Kubeconform
         run: |
           kubectl kustomize k8s/overlays/prod | kubeconform -strict -summary -kubernetes-version 1.30.0
 
   security-scan:
-    name: Trivy Vulnerability Scan
+    name: Build & Trivy Vulnerability Scan
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -88,9 +94,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build local API image for scanning
+      - name: Build local images (no push on PR)
         run: |
           docker build -t rahbar-api:${{ github.sha }} -f api/Dockerfile api/
+          docker build -t rahbar-indexer:${{ github.sha }} -f indexer/Dockerfile indexer/
+          docker build -t rahbar-ui:${{ github.sha }} -f ui/Dockerfile ui/
 
       - name: Run Trivy vulnerability scan
         uses: aquasecurity/trivy-action@0.28.0
@@ -124,44 +132,58 @@ jobs:
           cluster_name: rahbar-ci
           version: v0.23.0
 
-      - name: Build Docker images
+      - name: Build Docker images tagged by commit SHA
         run: |
           docker build -t aliakbar1214/rahbar-api:${{ github.sha }} -f api/Dockerfile api/
           docker build -t aliakbar1214/rahbar-indexer:${{ github.sha }} -f indexer/Dockerfile indexer/
           docker build -t aliakbar1214/rahbar-ui:${{ github.sha }} -f ui/Dockerfile ui/
 
-      - name: Load images into kind cluster
+      - name: Load SHA-tagged images into kind cluster
         run: |
           kind load docker-image aliakbar1214/rahbar-api:${{ github.sha }} --name rahbar-ci
           kind load docker-image aliakbar1214/rahbar-indexer:${{ github.sha }} --name rahbar-ci
           kind load docker-image aliakbar1214/rahbar-ui:${{ github.sha }} --name rahbar-ci
 
-      - name: Deploy base stack and Chroma
+      - name: Deploy namespace, ConfigMap, Secret, Chroma, and Redis
         run: |
           kubectl apply -f k8s/base/namespace.yaml
           kubectl apply -f k8s/base/configmap.yaml
-          kubectl create secret generic rahbar-secret -n rahbar --from-literal=LLM_API_KEY="ci-test-key"
+          kubectl patch configmap rahbar-config -n rahbar --type merge \
+            -p '{"data":{"LLM_PROVIDER":"stub","HOSTED_BASE_URL":""}}'
+          kubectl create configmap rahbar-corpus-files -n rahbar \
+            --from-file=eval/fixtures/academic-rules-2023.md \
+            --from-file=eval/fixtures/academic-rules-2026.md \
+            --from-file=eval/fixtures/fees-2026.md
+          kubectl create secret generic rahbar-secret -n rahbar --from-literal=LLM_API_KEY="ci-offline"
           kubectl apply -f k8s/base/chroma-statefulset.yaml
           kubectl apply -f k8s/base/redis.yaml
-          kubectl rollout status statefulset/rahbar-chroma -n rahbar --timeout=120s
+          kubectl rollout status statefulset/rahbar-chroma -n rahbar --timeout=180s
+          kubectl rollout status deployment/rahbar-redis -n rahbar --timeout=120s
 
       - name: Run indexer Job on fixture corpus
         run: |
-          kubectl create job --from=cronjob/rahbar-reindex-cronjob ci-indexer -n rahbar || kubectl apply -f k8s/base/indexer-job.yaml
-          kubectl wait --for=condition=complete job/rahbar-indexer-job -n rahbar --timeout=180s || true
+          sed "s|aliakbar1214/rahbar-indexer:v1.0.0|aliakbar1214/rahbar-indexer:${{ github.sha }}|g" \
+            k8s/base/indexer-job.yaml | kubectl apply -f -
+          kubectl wait --for=condition=complete job/rahbar-indexer-job -n rahbar --timeout=180s
+          kubectl logs job/rahbar-indexer-job -n rahbar
 
-      - name: Deploy API and UI
+      - name: Deploy API and UI and wait for rollout
         run: |
-          kubectl apply -f k8s/base/api-deployment.yaml
-          kubectl apply -f k8s/base/ui-deployment.yaml
-          kubectl rollout status deployment/rahbar-api -n rahbar --timeout=120s
-
-      - name: Port-forward API service
-        run: |
-          kubectl port-forward svc/rahbar-api 8000:8000 -n rahbar &
-          sleep 5
+          sed "s|aliakbar1214/rahbar-api:v1.0.0|aliakbar1214/rahbar-api:${{ github.sha }}|g" \
+            k8s/base/api-deployment.yaml | kubectl apply -f -
+          sed "s|aliakbar1214/rahbar-ui:v1.0.0|aliakbar1214/rahbar-ui:${{ github.sha }}|g" \
+            k8s/base/ui-deployment.yaml | kubectl apply -f -
+          kubectl rollout status deployment/rahbar-api -n rahbar --timeout=180s
+          kubectl rollout status deployment/rahbar-ui -n rahbar --timeout=120s
 
       - name: Run E2E evaluation gate
         run: |
           pip install httpx pyyaml
+          kubectl port-forward svc/rahbar-api 8000:8000 -n rahbar >/tmp/pf.log 2>&1 &
+          PF_PID=$!
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:8000/readyz >/dev/null; then break; fi
+            sleep 1
+          done
           python eval/run_eval.py --api http://127.0.0.1:8000 --golden eval/fixtures/golden.fixture.yaml
+          kill $PF_PID || true

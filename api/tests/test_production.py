@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 
 from app.config import get_settings
 from app.main import app
@@ -47,6 +46,7 @@ def test_must_abstain_when_no_passages_retrieved() -> None:
 def test_validation_fallback_path() -> None:
     """Ensure malformed model output or ValidationError returns the safe fallback Answer."""
     provider = HostedProvider(get_settings())
+    assert provider.name == "hosted"
     # Test that fallback answer conforms to contract
     assert isinstance(FALLBACK_ANSWER, Answer)
     assert FALLBACK_ANSWER.answered_from_context is False

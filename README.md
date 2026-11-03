@@ -1,8 +1,8 @@
 # RAHBAR: Grounded RAG on Kubernetes
 
-[![CI](https://github.com/aliakbar1214/rahbar-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/aliakbar1214/rahbar-rag/actions/workflows/ci.yml)
-[![CD](https://github.com/aliakbar1214/rahbar-rag/actions/workflows/cd.yml/badge.svg)](https://github.com/aliakbar1214/rahbar-rag/actions/workflows/cd.yml)
-[![Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen.svg)](https://github.com/aliakbar1214/rahbar-rag)
+[![CI](https://github.com/ali-akbar1214/rahbar-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/ali-akbar1214/rahbar-rag/actions/workflows/ci.yml)
+[![CD](https://github.com/ali-akbar1214/rahbar-rag/actions/workflows/cd.yml/badge.svg)](https://github.com/ali-akbar1214/rahbar-rag/actions/workflows/cd.yml)
+[![Coverage](https://img.shields.io/badge/coverage-74%25-brightgreen.svg)](https://github.com/ali-akbar1214/rahbar-rag)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Course**: CS4032 Software Construction & Development — Assignment 02  

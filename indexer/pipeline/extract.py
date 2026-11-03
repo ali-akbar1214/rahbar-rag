@@ -4,25 +4,34 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from .models import Document, Page
 
-try:
-    import pypdf
-except ImportError:
-    pypdf = None
+pypdf: Any = None
+pdfplumber: Any = None
+pytesseract: Any = None
+convert_from_path: Any = None
 
 try:
-    import pdfplumber
+    import pypdf as _pypdf
+    pypdf = _pypdf
 except ImportError:
-    pdfplumber = None
+    pass
 
 try:
-    import pytesseract
-    from pdf2image import convert_from_path
+    import pdfplumber as _pdfplumber
+    pdfplumber = _pdfplumber
 except ImportError:
-    pytesseract = None
-    convert_from_path = None
+    pass
+
+try:
+    import pytesseract as _pytesseract
+    from pdf2image import convert_from_path as _convert_from_path
+    pytesseract = _pytesseract
+    convert_from_path = _convert_from_path
+except ImportError:
+    pass
 
 
 def extract(path: str, doc_version: str, superseded: bool) -> Document:
@@ -54,7 +63,7 @@ def extract(path: str, doc_version: str, superseded: bool) -> Document:
 
 def _extract_pdf(file_path: Path, source_name: str) -> list[Page]:
     pages: list[Page] = []
-    
+
     # Primary: pdfplumber for high-fidelity text and table extraction
     if pdfplumber is not None:
         try:
@@ -110,7 +119,9 @@ def _extract_pdf(file_path: Path, source_name: str) -> list[Page]:
 
 def _extract_text_file(file_path: Path, source_name: str) -> list[Page]:
     content = file_path.read_text(encoding="utf-8", errors="replace")
-    # Split by form-feed or treat as multi-page if '---' page separators exist
+    # Strip optional YAML front matter (--- ... ---) used by fixture files
+    content = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", content, count=1, flags=re.DOTALL)
+    # Split by form-feed or treat as multi-page
     raw_pages = content.split("\x0c") if "\x0c" in content else [content]
     pages: list[Page] = []
     for idx, pt in enumerate(raw_pages, start=1):

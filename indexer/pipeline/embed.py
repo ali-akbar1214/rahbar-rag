@@ -5,11 +5,18 @@ from __future__ import annotations
 import hashlib
 import math
 import os
-from typing import Any
+import re
 
 import httpx
 
 from .config import IndexerSettings
+
+_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "been", "by", "can", "could", "did",
+    "do", "does", "for", "from", "how", "i", "if", "in", "is", "it", "its", "may",
+    "much", "my", "now", "of", "on", "or", "say", "the", "to", "was", "were", "what",
+    "when", "where", "which", "who", "why", "with",
+})
 
 
 def embed(texts: list[str], settings: IndexerSettings) -> list[list[float]]:
@@ -77,12 +84,29 @@ def embed(texts: list[str], settings: IndexerSettings) -> list[list[float]]:
     return all_embeddings
 
 
+def _stem(word: str) -> str:
+    for suffix in ("ance", "ence", "ing", "tion"):
+        if len(word) > len(suffix) + 3 and word.endswith(suffix):
+            return word[: -len(suffix)]
+    if len(word) > 4 and word.endswith(("ed", "es")):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s"):
+        return word[:-1]
+    return word
+
+
 def _deterministic_vector(text: str, dim: int = 768) -> list[float]:
-    """Generate a reproducible, unit-length float vector from text hash."""
-    h = hashlib.sha256(text.encode("utf-8")).digest()
-    vec = []
-    for j in range(dim):
-        byte_val = h[j % len(h)]
-        vec.append(math.sin(byte_val + j))
-    norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+    """Generate a reproducible, unit-length feature-hashed vector preserving lexical cosine similarity."""
+    raw_tokens = re.findall(r"[a-z0-9]+", text.lower())
+    features = [_stem(t) for t in raw_tokens if t not in _STOPWORDS and len(t) > 1]
+    vec = [0.0] * dim
+    for tok in features:
+        digest = hashlib.sha256(tok.encode("utf-8")).digest()
+        idx = int.from_bytes(digest[:4], "big") % dim
+        vec[idx] += 1.0
+    norm = math.sqrt(sum(v * v for v in vec))
+    if norm == 0.0:
+        h = hashlib.sha256(text.encode("utf-8")).digest()
+        vec = [math.sin(h[j % len(h)] + j) for j in range(dim)]
+        norm = math.sqrt(sum(v * v for v in vec)) or 1.0
     return [v / norm for v in vec]

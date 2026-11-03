@@ -5,12 +5,48 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 from typing import Any
 
 import httpx
 
 from ..config import Settings
 from ..schemas import Passage
+
+_STOPWORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "been", "by", "can", "could", "did",
+    "do", "does", "for", "from", "how", "i", "if", "in", "is", "it", "its", "may",
+    "much", "my", "now", "of", "on", "or", "say", "the", "to", "was", "were", "what",
+    "when", "where", "which", "who", "why", "with",
+})
+
+
+def _stem(word: str) -> str:
+    for suffix in ("ance", "ence", "ing", "tion"):
+        if len(word) > len(suffix) + 3 and word.endswith(suffix):
+            return word[: -len(suffix)]
+    if len(word) > 4 and word.endswith(("ed", "es")):
+        return word[:-2]
+    if len(word) > 3 and word.endswith("s"):
+        return word[:-1]
+    return word
+
+
+def _offline_vector(text: str, dim: int = 768) -> list[float]:
+    """Feature-hashed unit vector identical to indexer.pipeline.embed._deterministic_vector."""
+    raw_tokens = re.findall(r"[a-z0-9]+", text.lower())
+    features = [_stem(t) for t in raw_tokens if t not in _STOPWORDS and len(t) > 1]
+    vec = [0.0] * dim
+    for tok in features:
+        digest = hashlib.sha256(tok.encode("utf-8")).digest()
+        idx = int.from_bytes(digest[:4], "big") % dim
+        vec[idx] += 1.0
+    norm = math.sqrt(sum(v * v for v in vec))
+    if norm == 0.0:
+        h = hashlib.sha256(text.encode("utf-8")).digest()
+        vec = [math.sin(h[j % len(h)] + j) for j in range(dim)]
+        norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+    return [v / norm for v in vec]
 
 
 class ChromaRetriever:
@@ -62,10 +98,7 @@ class ChromaRetriever:
                     return resp.json()["embeddings"][0]
         except Exception:
             # Deterministic fallback vector for offline testing
-            h = hashlib.sha256(text.encode("utf-8")).digest()
-            vec = [math.sin(h[j % len(h)] + j) for j in range(768)]
-            norm = math.sqrt(sum(v * v for v in vec)) or 1.0
-            return [v / norm for v in vec]
+            return _offline_vector(text, 768)
 
     def retrieve(self, question: str, k: int) -> list[Passage]:
         """Embed question, query ChromaDB, filter superseded policies, and return Passages."""
@@ -78,8 +111,9 @@ class ChromaRetriever:
 
         # Retrieve extra candidates so we can discard superseded passages without dropping below k
         n_results = max(k * 2, 10)
+        q_emb: Any = [query_vector]
         results = collection.query(
-            query_embeddings=[query_vector],
+            query_embeddings=q_emb,
             n_results=n_results,
             include=["documents", "metadatas", "distances"],
         )
@@ -89,9 +123,12 @@ class ChromaRetriever:
             return passages
 
         ids = results["ids"][0]
-        docs = results["documents"][0] if results.get("documents") else [""] * len(ids)
-        metas = results["metadatas"][0] if results.get("metadatas") else [{}] * len(ids)
-        distances = results["distances"][0] if results.get("distances") else [0.0] * len(ids)
+        raw_docs = results.get("documents")
+        raw_metas = results.get("metadatas")
+        raw_dists = results.get("distances")
+        docs = raw_docs[0] if raw_docs else [""] * len(ids)
+        metas: list[Any] = list(raw_metas[0]) if raw_metas else [{}] * len(ids)
+        distances = raw_dists[0] if raw_dists else [0.0] * len(ids)
 
         for cid, doc_text, meta, dist in zip(ids, docs, metas, distances):
             # Explicitly filter out superseded clauses: outdated policies must not be served
