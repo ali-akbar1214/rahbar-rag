@@ -24,7 +24,7 @@ class SemanticCache:
         self.generation_id = settings.cache_generation_id
         self._memory_cache: dict[str, dict[str, Any]] = {}
 
-        self.redis_client = None
+        self.redis_client: Any = None
         try:
             import redis
 

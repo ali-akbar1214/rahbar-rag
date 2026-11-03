@@ -39,6 +39,8 @@ spec:
               value: "/data"
             - name: ANONYMIZED_TELEMETRY
               value: "FALSE"
+            - name: HOME
+              value: "/tmp"
           resources:
             requests:
               cpu: 100m

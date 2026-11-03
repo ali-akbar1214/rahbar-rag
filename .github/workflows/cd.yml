@@ -90,10 +90,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Create ephemeral kind cluster
-        uses: helm/kind-action@v1.10.0
+        uses: helm/kind-action@v1.15.1
         with:
           cluster_name: rahbar-cd
-          version: v0.23.0
 
       - name: Deploy SHA-tagged manifests and verify rollout
         run: |

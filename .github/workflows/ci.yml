@@ -101,7 +101,7 @@ jobs:
           docker build -t rahbar-ui:${{ github.sha }} -f ui/Dockerfile ui/
 
       - name: Run Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: "rahbar-api:${{ github.sha }}"
           format: "table"
@@ -127,10 +127,9 @@ jobs:
           cache: "pip"
 
       - name: Create kind cluster
-        uses: helm/kind-action@v1.10.0
+        uses: helm/kind-action@v1.15.1
         with:
           cluster_name: rahbar-ci
-          version: v0.23.0
 
       - name: Build Docker images tagged by commit SHA
         run: |
@@ -187,3 +186,10 @@ jobs:
           done
           python eval/run_eval.py --api http://127.0.0.1:8000 --golden eval/fixtures/golden.fixture.yaml
           kill $PF_PID || true
+
+      - name: Dump cluster diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods,jobs,pvc -n rahbar -o wide || true
+          kubectl describe pods -n rahbar || true
+          kubectl logs -l app=rahbar -n rahbar --tail=50 || true

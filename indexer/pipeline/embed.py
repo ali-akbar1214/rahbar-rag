@@ -29,6 +29,9 @@ def embed(texts: list[str], settings: IndexerSettings) -> list[list[float]]:
     if not texts:
         return []
 
+    if os.environ.get("LLM_PROVIDER", "").lower() == "stub":
+        return [_deterministic_vector(text, 768) for text in texts]
+
     embed_model = settings.embed_model
     batch_size = 32
     all_embeddings: list[list[float]] = []

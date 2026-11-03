@@ -65,6 +65,9 @@ class ChromaRetriever:
 
     def _embed_query(self, text: str) -> list[float]:
         """Embed the query with the pinned embed_model."""
+        if self.settings.llm_provider.lower() == "stub":
+            return _offline_vector(text, 768)
+
         hosted_url = self.settings.hosted_base_url or os.environ.get("HOSTED_BASE_URL", "")
         api_key = self.settings.llm_api_key or os.environ.get("LLM_API_KEY", "")
 
