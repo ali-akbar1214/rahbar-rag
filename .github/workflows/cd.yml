@@ -1,0 +1,162 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Run Tests Before Publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies and run pytest
+        env:
+          PYTHONPATH: ".:api:indexer"
+        run: |
+          pip install -r api/requirements.txt -r api/requirements-dev.txt
+          pip install -r indexer/requirements.txt -r indexer/requirements-dev.txt
+          pip install pytest-cov
+          pytest --cov=app --cov-fail-under=60 api/tests indexer/tests
+
+  publish:
+    name: Build & Publish SHA-Tagged Images
+    runs-on: ubuntu-24.04
+    needs: [test]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: api/
+          file: api/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME || 'aliakbar1214' }}/rahbar-api:${{ github.sha }}
+
+      - name: Build and push Indexer image
+        uses: docker/build-push-action@v5
+        with:
+          context: indexer/
+          file: indexer/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME || 'aliakbar1214' }}/rahbar-indexer:${{ github.sha }}
+
+      - name: Build and push UI image
+        uses: docker/build-push-action@v5
+        with:
+          context: ui/
+          file: ui/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME || 'aliakbar1214' }}/rahbar-ui:${{ github.sha }}
+
+  deploy:
+    name: Deploy SHA-Tagged Stack & Smoke Test
+    runs-on: ubuntu-24.04
+    needs: [publish]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create ephemeral kind cluster
+        uses: helm/kind-action@v1.15.1
+        with:
+          cluster_name: rahbar-cd
+
+      - name: Deploy SHA-tagged manifests and verify rollout
+        run: |
+          IMG_USER="${{ secrets.DOCKERHUB_USERNAME || 'aliakbar1214' }}"
+          kubectl label nodes --all ingress-ready=true --overwrite
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+          kubectl wait -n ingress-nginx --for=condition=complete job/ingress-nginx-admission-patch --timeout=120s || true
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=180s
+          kubectl apply -f k8s/base/namespace.yaml
+          kubectl apply -f k8s/base/serviceaccounts.yaml
+          kubectl apply -f k8s/base/configmap.yaml
+          kubectl patch configmap rahbar-config -n rahbar --type merge \
+            -p '{"data":{"LLM_PROVIDER":"stub","HOSTED_BASE_URL":""}}'
+          kubectl create configmap rahbar-corpus-files -n rahbar \
+            --from-file=eval/fixtures/academic-rules-2023.md \
+            --from-file=eval/fixtures/academic-rules-2026.md \
+            --from-file=eval/fixtures/fees-2026.md
+          kubectl create secret generic rahbar-secret -n rahbar --from-literal=LLM_API_KEY="cd-smoke"
+          kubectl apply -f k8s/base/chroma-statefulset.yaml
+          kubectl apply -f k8s/base/redis.yaml
+          kubectl rollout status statefulset/rahbar-chroma -n rahbar --timeout=180s
+          kubectl rollout status deployment/rahbar-redis -n rahbar --timeout=120s
+          sed "s|aliakbar1214/rahbar-indexer:v1.0.0|${IMG_USER}/rahbar-indexer:${{ github.sha }}|g" \
+            k8s/base/indexer-job.yaml | kubectl apply -f -
+          kubectl wait --for=condition=complete job/rahbar-indexer-job -n rahbar --timeout=180s
+          sed "s|aliakbar1214/rahbar-api:v1.0.0|${IMG_USER}/rahbar-api:${{ github.sha }}|g" \
+            k8s/base/api-deployment.yaml | kubectl apply -f -
+          sed "s|aliakbar1214/rahbar-ui:v1.0.0|${IMG_USER}/rahbar-ui:${{ github.sha }}|g" \
+            k8s/base/ui-deployment.yaml | kubectl apply -f -
+          for i in $(seq 1 5); do
+            kubectl apply -f k8s/base/ingress.yaml && break
+            sleep 3
+          done
+          kubectl rollout status deployment/rahbar-api -n rahbar --timeout=180s
+          kubectl rollout status deployment/rahbar-ui -n rahbar --timeout=120s
+
+      - name: Smoke test UI and API through Kubernetes Ingress
+        run: |
+          kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8088:80 >/tmp/pf-ing.log 2>&1 &
+          PF_PID=$!
+          ASK_JSON=""
+          for i in $(seq 1 30); do
+            if curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/ >/dev/null; then
+              if ASK_JSON="$(curl -sf -X POST http://127.0.0.1:8088/api/ask \
+                -H "Host: rahbar.local" \
+                -H "Content-Type: application/json" \
+                -d '{"question": "When is a student placed on academic warning?"}')"; then
+                break
+              fi
+            fi
+            sleep 2
+          done
+          UI_HTML="$(curl -sf -H "Host: rahbar.local" http://127.0.0.1:8088/)"
+          grep -q "<title>RAHBAR</title>" <<< "$UI_HTML"
+          echo "$ASK_JSON"
+          grep -q '"answered_from_context"' <<< "$ASK_JSON"
+          kill $PF_PID || true
+
+      - name: Dump cluster diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods,jobs,svc,ingress -A -o wide || true
+          kubectl describe pods -n rahbar || true
+          kubectl logs -l app=rahbar -n rahbar --tail=50 || true

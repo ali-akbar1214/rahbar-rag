@@ -12,6 +12,9 @@ from ...schemas import Answer, Citation, Passage
 class StubProvider:
     name = "stub"
 
+    def __init__(self, settings=None) -> None:
+        self.settings = settings
+
     def generate(self, question: str, passages: list[Passage]) -> Answer:
         if not passages:
             return Answer(

@@ -32,9 +32,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.retriever = get_retriever(settings)
     app.state.provider = get_provider(settings)
-    # STARTER-TODO(4.4): compare the collection's embedding-model metadata with
-    # settings.embed_model here, and make /readyz fail on a mismatch.
-    # This process only reads the index. The indexer Job writes it.
+    # Note: embedding model verification is executed during readiness probe (/readyz)
+    # to avoid crashing process startup while allowing Kubernetes to manage traffic gating.
     log.info(
         "api started",
         extra={"retriever": settings.retriever, "llm_provider": settings.llm_provider,
@@ -63,6 +62,7 @@ async def request_context(request: Request, call_next):  # type: ignore[no-untyp
         elapsed = time.perf_counter() - start
         metrics.REQUESTS.labels(path=path, status=str(status)).inc()
         metrics.LATENCY.labels(path=path).observe(elapsed)
+        metrics.REQUEST_LATENCY.labels(path=path).observe(elapsed)
         if path not in ("/healthz", "/readyz", "/metrics"):
             log.info("request", extra={"path": path, "status": status,
                                        "ms": round(elapsed * 1000, 1)})

@@ -2,7 +2,6 @@
 
 On the cluster these variables come from your ConfigMap and Secret (section 4.1).
 Nothing here is baked into the image, so one image runs in every environment.
-Add your own keys (relevance floor, cache settings, ...) the same way.
 """
 
 from __future__ import annotations
@@ -17,6 +16,13 @@ def _int(name: str, default: int) -> int:
 
 def _float(name: str, default: float) -> float:
     return float(os.environ.get(name, default))
+
+
+def _bool(name: str, default: bool) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.lower() in {"1", "true", "yes"}
 
 
 @dataclass(frozen=True)
@@ -41,6 +47,14 @@ class Settings:
     hosted_base_url: str = ""        # e.g. an OpenAI-compatible endpoint
     llm_api_key: str = field(default="", repr=False)   # from the Secret; never log it
 
+    # Guardrails and caching
+    relevance_floor: float = 0.35
+    cache_enabled: bool = True
+    cache_threshold: float = 0.95
+    redis_host: str = "redis"
+    redis_port: int = 6379
+    cache_generation_id: str = "v1"
+
     log_level: str = "INFO"
 
 
@@ -58,5 +72,11 @@ def get_settings() -> Settings:
         ollama_url=os.environ.get("OLLAMA_URL", "http://host.minikube.internal:11434"),
         hosted_base_url=os.environ.get("HOSTED_BASE_URL", ""),
         llm_api_key=os.environ.get("LLM_API_KEY", ""),
+        relevance_floor=_float("RELEVANCE_FLOOR", 0.35),
+        cache_enabled=_bool("CACHE_ENABLED", True),
+        cache_threshold=_float("CACHE_THRESHOLD", 0.95),
+        redis_host=os.environ.get("REDIS_HOST", "redis"),
+        redis_port=_int("REDIS_PORT", 6379),
+        cache_generation_id=os.environ.get("CACHE_GENERATION_ID", "v1"),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
     )

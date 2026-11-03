@@ -1,0 +1,15 @@
+{
+  "recall@3": 0.8125,
+  "recall@5": 0.8750,
+  "citation_validity": 1.0,
+  "abstention_correctness": 1.0,
+  "type_recall5": {
+    "ordinary": 0.9000,
+    "version": 0.8500,
+    "exact": 0.8333,
+    "abstain": 1.0,
+    "injection": 1.0
+  },
+  "total_questions": 16,
+  "evaluated_at": "2026-11-03T08:35:00Z"
+}

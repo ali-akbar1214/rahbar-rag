@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rahbar-chroma
+  namespace: rahbar
+  labels:
+    app: rahbar
+    component: chroma
+spec:
+  serviceName: rahbar-chroma
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rahbar
+      component: chroma
+  template:
+    metadata:
+      labels:
+        app: rahbar
+        component: chroma
+    spec:
+      terminationGracePeriodSeconds: 30
+      serviceAccountName: rahbar-chroma-sa
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: chroma
+          image: chromadb/chroma:1.0.12
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: IS_PERSISTENT
+              value: "TRUE"
+            - name: PERSIST_DIRECTORY
+              value: "/data"
+            - name: ANONYMIZED_TELEMETRY
+              value: "FALSE"
+            - name: HOME
+              value: "/tmp"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1024Mi
+          securityContext:
+            readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              path: /api/v2/heartbeat
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/v2/heartbeat
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: chroma-data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: chroma-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rahbar-chroma
+  namespace: rahbar
+  labels:
+    app: rahbar
+    component: chroma
+spec:
+  type: ClusterIP
+  selector:
+    app: rahbar
+    component: chroma
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http

@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rahbar
+
+resources:
+  - ../../base
+
+images:
+  - name: aliakbar1214/rahbar-api
+    newTag: v1.0.0
+  - name: aliakbar1214/rahbar-indexer
+    newTag: v1.0.0
+  - name: aliakbar1214/rahbar-ui
+    newTag: v1.0.0
+
+patches:
+  - target:
+      kind: ConfigMap
+      name: rahbar-config
+    patch: |-
+      - op: replace
+        path: /data/LOG_LEVEL
+        value: "INFO"
