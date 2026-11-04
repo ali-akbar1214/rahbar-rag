@@ -28,7 +28,7 @@ services:
     environment:
       - RETRIEVER=chroma
       - LLM_PROVIDER=hosted
-      - EMBED_MODEL=nomic-embed-text
+      - EMBED_MODEL=lexical-hash-768
       - CHROMA_HOST=chroma
       - CHROMA_PORT=8000
       - CHROMA_COLLECTION=rahbar

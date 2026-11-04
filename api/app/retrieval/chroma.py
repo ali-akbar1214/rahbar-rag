@@ -49,6 +49,26 @@ def _offline_vector(text: str, dim: int = 768) -> list[float]:
     return [v / norm for v in vec]
 
 
+_SYNONYMS = {
+    "plagiar": ["dishonesty", "penalty", "penalties", "cheating"],
+    "caught": ["found", "guilty", "evidence"],
+    "someone": ["student"],
+}
+
+
+def _expand_for_retrieval(query: str) -> str:
+    tokens = re.findall(r"[a-z0-9]+", query.lower())
+    extra: list[str] = []
+    for t in tokens:
+        st = _stem(t)
+        for prefix, syns in _SYNONYMS.items():
+            if prefix in st or st in prefix:
+                extra.extend(syns)
+    if extra:
+        return query + " " + " ".join(extra)
+    return query
+
+
 class ChromaRetriever:
     name = "chroma"
 
@@ -65,8 +85,8 @@ class ChromaRetriever:
 
     def _embed_query(self, text: str) -> list[float]:
         """Embed the query with the pinned embed_model."""
-        if self.settings.llm_provider.lower() == "stub":
-            return _offline_vector(text, 768)
+        if self.settings.llm_provider.lower() == "stub" or self.settings.embed_model == "lexical-hash-768":
+            return _offline_vector(_expand_for_retrieval(text), 768)
 
         hosted_url = self.settings.hosted_base_url or os.environ.get("HOSTED_BASE_URL", "")
         api_key = self.settings.llm_api_key or os.environ.get("LLM_API_KEY", "")

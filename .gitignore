@@ -26,3 +26,7 @@ htmlcov/
 # Local scratch
 *.log
 .DS_Store
+
+key.env
+*.env
+
