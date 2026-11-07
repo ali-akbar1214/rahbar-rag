@@ -122,3 +122,31 @@ def test_semantic_cache_hit_and_invalidation() -> None:
     # Invalidate cache
     cache.invalidate("v2")
     assert cache.get(question) is None
+
+
+def test_semantic_cache_skips_followup_and_syncs_reindex_generation() -> None:
+    """Follow-up questions must bypass semantic cache, and Chroma re-index must flush stale entries."""
+    settings = get_settings()
+    cache = SemanticCache(settings)
+    valid_response = AskResponse(
+        request_id="rid-2",
+        answer="Minimum CGPA is 2.00.",
+        citations=[Citation(source="Academic_Rules.pdf", section="5.4", page=18)],
+        answered_from_context=True,
+        confidence="high",
+        retrieved=[],
+        provider="stub",
+    )
+
+    followup = "And what about for graduate students?"
+    cache.set(followup, valid_response)
+    assert cache.get(followup) is None
+
+    standalone = "What CGPA puts an undergraduate on academic warning?"
+    cache.sync_generation("index-gen-1")
+    cache.set(standalone, valid_response)
+    assert cache.get(standalone) is not None
+
+    # Simulates indexer Job writing a new indexed_at token to Chroma collection metadata
+    cache.sync_generation("index-gen-2")
+    assert cache.get(standalone) is None

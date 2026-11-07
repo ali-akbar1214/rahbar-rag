@@ -40,3 +40,15 @@ def test_chroma_retriever_filters_superseded_and_converts_similarity(monkeypatch
     assert passages[0].chunk_id == "c1"
     assert passages[0].score == 0.9
     assert passages[0].source == "rules-2026.pdf"
+
+
+def test_chroma_retriever_includes_superseded_only_when_explicitly_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    import chromadb
+
+    monkeypatch.setattr(chromadb, "HttpClient", lambda **kwargs: MockChromaClient())
+    settings = get_settings()
+    retriever = ChromaRetriever(settings)
+
+    historical = retriever.retrieve("Did the 2023 academic rules allow repeating a course?", k=5)
+    sources = [p.source for p in historical]
+    assert "rules-2023.pdf" in sources
