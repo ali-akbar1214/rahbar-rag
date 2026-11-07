@@ -81,20 +81,29 @@ def recall_at_k(relevant: list[dict], retrieved: list[dict], k: int) -> float | 
 
 
 def citation_validity(response: dict) -> float | None:
-    """Fraction of the response's citations that match a passage in response['retrieved'].
-    Return None when there are no citations.
+    """Fraction of the response's citations that match both source and section of a passage
+    in response['retrieved']. Return None when there are no citations.
     """
     citations = response.get("citations") or []
     if not citations:
         return None
 
     retrieved = response.get("retrieved") or []
-    retrieved_sources = {r.get("source", "").lower() for r in retrieved}
-
     valid_count = 0
     for c in citations:
-        c_source = c.get("source", "").lower()
-        if any(c_source in rs or rs in c_source for rs in retrieved_sources):
+        c_source = (c.get("source") or "").lower().strip()
+        c_section = (c.get("section") or "").lower().strip()
+        if not c_source:
+            continue
+        matched = False
+        for r in retrieved:
+            r_source = (r.get("source") or "").lower().strip()
+            r_section = (r.get("section") or "").lower().strip()
+            if r_source and (c_source in r_source or r_source in c_source):
+                if c_section and r_section and _match_section(c_section, r_section):
+                    matched = True
+                    break
+        if matched:
             valid_count += 1
 
     return valid_count / len(citations)
