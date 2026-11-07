@@ -36,16 +36,16 @@ def embed(texts: list[str], settings: IndexerSettings) -> list[list[float]]:
     batch_size = 32
     all_embeddings: list[list[float]] = []
 
-    # Check for hosted mode or direct ollama
-    hosted_url = os.environ.get("HOSTED_BASE_URL", "")
-    api_key = os.environ.get("LLM_API_KEY", "")
+    # Dedicated OpenAI-compatible embedding endpoint (optional); otherwise use pinned Ollama host.
+    # Note: HOSTED_BASE_URL is for LLM chat completions (e.g. Groq) which may not serve embeddings.
+    embed_base_url = os.environ.get("EMBED_BASE_URL", "")
+    api_key = os.environ.get("EMBED_API_KEY") or os.environ.get("LLM_API_KEY", "")
 
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
         try:
-            if hosted_url:
-                # Hosted OpenAI-compatible embeddings
-                client_url = hosted_url.rstrip("/") + "/embeddings"
+            if embed_base_url:
+                client_url = embed_base_url.rstrip("/") + "/embeddings"
                 headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
                 with httpx.Client(timeout=30.0) as client:
                     resp = client.post(
@@ -60,7 +60,7 @@ def embed(texts: list[str], settings: IndexerSettings) -> list[list[float]]:
             else:
                 # Ollama embeddings endpoint
                 endpoint = f"{settings.ollama_url.rstrip('/')}/api/embed"
-                with httpx.Client(timeout=45.0) as client:
+                with httpx.Client(timeout=httpx.Timeout(45.0, connect=2.0)) as client:
                     resp = client.post(
                         endpoint,
                         json={"model": embed_model, "input": batch},
@@ -78,7 +78,7 @@ def embed(texts: list[str], settings: IndexerSettings) -> list[list[float]]:
                         resp.raise_for_status()
                         all_embeddings.extend(resp.json()["embeddings"])
         except Exception:
-            # Deterministic fallback vector generation for offline development / CI testing
+            # Deterministic fallback vector generation for offline unit testing
             dim = 768
             for text in batch:
                 vec = _deterministic_vector(text, dim)

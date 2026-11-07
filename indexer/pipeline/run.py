@@ -71,6 +71,13 @@ def run_pipeline(settings: IndexerSettings) -> int:
     from .store import store
 
     documents = discover(settings.corpus_dir)
+    if not documents and os.environ.get("AUTO_FETCH_CORPUS", "").lower() in {"1", "true", "yes"}:
+        from .fetch_corpus import fetch_to_staging
+
+        staging_dir = os.environ.get("CORPUS_STAGING_DIR", "/tmp/rahbar-corpus")
+        log("corpus_dir empty; fetching public FAST-NUCES corpus to staging", staging_dir=staging_dir)
+        staged = fetch_to_staging(staging_dir)
+        documents = discover(str(staged))
     if not documents:
         raise SystemExit(f"no documents found in {settings.corpus_dir}")
     all_chunks: list[Chunk] = []
