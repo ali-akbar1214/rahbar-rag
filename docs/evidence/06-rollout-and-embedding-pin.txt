@@ -1,0 +1,41 @@
+# Section 4.4 · Embedding Pin Guardrail Demonstration (0/1 READY on Mismatch)
+
+$ kubectl patch configmap rahbar-config -n rahbar --type merge -p '{"data":{"EMBED_MODEL":"all-minilm"}}'
+configmap/rahbar-config patched
+
+$ kubectl rollout restart deployment/rahbar-api -n rahbar
+deployment.apps/rahbar-api restarted
+
+$ kubectl get pods -n rahbar -l component=api
+NAME                          READY   STATUS    RESTARTS   AGE
+rahbar-api-6878b46d79-2k7p9   1/1     Running   0          48m
+rahbar-api-6878b46d79-5x9m2   1/1     Running   0          48m
+rahbar-api-6878b46d79-w8q41   1/1     Running   0          48m
+rahbar-api-7c94f8d65b-x9v2l   0/1     Running   0          24s
+
+$ kubectl logs rahbar-api-7c94f8d65b-x9v2l -n rahbar | tail -n 3
+{"ts": "2026-11-03T10:58:12Z", "level": "ERROR", "logger": "rahbar.health", "msg": "startup embedding pin conflict: embedding_model mismatch: index has nomic-embed-text (dim=768) != configured all-minilm", "request_id": "-"}
+{"ts": "2026-11-03T10:58:19Z", "level": "ERROR", "logger": "rahbar.health", "msg": "embedding model mismatch detected: index uses nomic-embed-text (dim=768) but API configured with all-minilm", "request_id": "8e3b9f12a041"}
+
+$ kubectl patch configmap rahbar-config -n rahbar --type merge -p '{"data":{"EMBED_MODEL":"nomic-embed-text"}}' && kubectl rollout undo deployment/rahbar-api -n rahbar
+configmap/rahbar-config patched
+deployment.apps/rahbar-api rolled back
+
+---
+
+# Section 4.6 · Zero-Downtime Rolling Update and Rollback
+
+$ kubectl set image deployment/rahbar-api api=aliakbar1214/rahbar-api:d211073a30f171f943fbd3b96cb8f29f1ad970ac -n rahbar
+deployment.apps/rahbar-api image updated
+
+$ kubectl rollout status deployment/rahbar-api -n rahbar
+Waiting for deployment "rahbar-api" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "rahbar-api" rollout to finish: 2 of 3 updated replicas are available...
+deployment "rahbar-api" successfully rolled out
+
+$ kubectl rollout undo deployment/rahbar-api -n rahbar
+deployment.apps/rahbar-api rolled back
+
+$ kubectl rollout status deployment/rahbar-api -n rahbar
+deployment "rahbar-api" successfully rolled out
+

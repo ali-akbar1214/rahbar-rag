@@ -24,12 +24,14 @@ spec:
         fsGroup: 1000
       containers:
         - name: indexer
-          image: aliakbar1214/rahbar-indexer:v1.0.0
+          image: aliakbar1214/rahbar-indexer:9031a74de8d0bca139e230515f3b861917f8ef42
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
                 name: rahbar-config
           env:
+            - name: HOME
+              value: "/tmp"
             - name: LLM_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -44,7 +46,7 @@ spec:
               cpu: 1500m
               memory: 2048Mi
           securityContext:
-            readOnlyRootFilesystem: false
+            readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop:
@@ -53,8 +55,12 @@ spec:
             - name: corpus-volume
               mountPath: /corpus
               readOnly: true
+            - name: tmp-dir
+              mountPath: /tmp
       volumes:
         - name: corpus-volume
           configMap:
             name: rahbar-corpus-files
             optional: true
+        - name: tmp-dir
+          emptyDir: {}

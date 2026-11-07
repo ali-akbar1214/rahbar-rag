@@ -7,7 +7,7 @@ import re
 from .models import Chunk, Document
 
 HEADING_PATTERN = re.compile(
-    r"^(?:#{1,6}\s+\S.*|\d+\.\s+[A-Z][A-Za-z0-9\s,&'()-]{2,65}|(?:Section|Chapter|Clause)\s+\d+[\.\d]*.*|[A-Z][A-Za-z\s,&'()-]{3,50}\b(?:Policy|Regulations?|Rules|Requirements?|Calculation|Criteria|Warning|Registration|Assessment|Fees?|Grading)\b[A-Za-z0-9\s,&'().-]*)$",
+    r"^(?:#{1,6}\s+\S.*|(?:[1-9]\d*\.|[IVX]+\s*-)\s+[A-Z][A-Za-z0-9\s,&'’/-]{2,65}|(?:Section|Chapter|Clause)\s+\d+[\.\d]*.*|[A-Z][A-Za-z\s,&'’/-]{2,55}\b(?:Policy|Policies|Regulations?|Rules|Requirements?|Calculation|Criteria|Warning|Registration|Assessment|Fees?|Grading|Course|Courses|Honesty|Dishonesty|Plagiarism|Duration|Load|Pre-?requisites?|Probation|Dismissal|Attendance|Transfer|Scholarship|Honors|Honours)\b[A-Za-z0-9\s,&'’/.-]*)$",
     re.MULTILINE,
 )
 

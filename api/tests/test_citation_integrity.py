@@ -21,3 +21,22 @@ def test_validate_citations_resolves_page_from_passages() -> None:
     validated = validate_citations(ans, passages)
     assert len(validated.citations) == 1
     assert validated.citations[0].page == 7
+
+
+def test_validate_citations_strips_fabricated_section_on_valid_source() -> None:
+    passages = [
+        Passage(chunk_id="c1", text="80% attendance", source="doc.pdf", section="1.21 Attendance", page=4, score=0.93)
+    ]
+    ans = Answer(
+        reasoning="Reasoning",
+        answer="Grounded text",
+        citations=[
+            Citation(source="doc.pdf", section="1.21 Attendance", page=4),
+            Citation(source="doc.pdf", section="9.99 Fabricated Clause", page=99),
+        ],
+        answered_from_context=True,
+        confidence="high",
+    )
+    validated = validate_citations(ans, passages)
+    assert len(validated.citations) == 1
+    assert validated.citations[0].section == "1.21 Attendance"

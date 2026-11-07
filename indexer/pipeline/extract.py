@@ -64,14 +64,33 @@ def extract(path: str, doc_version: str, superseded: bool) -> Document:
 def _extract_pdf(file_path: Path, source_name: str) -> list[Page]:
     pages: list[Page] = []
 
-    # Primary: pdfplumber for high-fidelity text and table extraction
+    # Prepare pypdf stream texts for wide multi-column layouts (e.g. 3-column Prospectus)
+    pypdf_texts: list[str] = []
+    if pypdf is not None:
+        try:
+            reader = pypdf.PdfReader(str(file_path))
+            pypdf_texts = [(rp.extract_text() or "") for rp in reader.pages]
+        except Exception:
+            pypdf_texts = []
+
     if pdfplumber is not None:
         try:
             with pdfplumber.open(file_path) as pdf:
                 for idx, p in enumerate(pdf.pages, start=1):
-                    text = p.extract_text() or ""
+                    # Clip to cropbox/bbox so 2-up InDesign facing-page spreads do not bleed across pages
+                    clipped = p.within_bbox(p.cropbox or p.bbox, strict=False)
+                    plumber_text = clipped.extract_text() or ""
+                    stream_text = pypdf_texts[idx - 1] if idx - 1 < len(pypdf_texts) else ""
+
+                    # Wide multi-column pages (>550pt) preserve logical column order in pypdf content streams,
+                    # whereas single-column booklets preserve clean word kerning in clipped pdfplumber.
+                    if p.width > 550 and len(stream_text.strip()) >= 80:
+                        text = stream_text
+                    else:
+                        text = plumber_text if len(plumber_text.strip()) >= 30 else stream_text
+
                     # Also extract tables if present and format as markdown
-                    tables = p.extract_tables() or []
+                    tables = clipped.extract_tables() or []
                     if tables:
                         table_strs = []
                         for tbl in tables:
@@ -102,17 +121,9 @@ def _extract_pdf(file_path: Path, source_name: str) -> list[Page]:
         except Exception:
             pass
 
-    # Secondary fallback: pypdf
-    if pypdf is not None:
-        try:
-            reader = pypdf.PdfReader(str(file_path))
-            for idx, p in enumerate(reader.pages, start=1):
-                text = p.extract_text() or ""
-                pages.append(Page(source=source_name, page=idx, text=text, ocr=False))
-            if pages:
-                return pages
-        except Exception:
-            pass
+    # Secondary fallback: pypdf alone
+    if pypdf_texts:
+        return [Page(source=source_name, page=idx, text=t, ocr=False) for idx, t in enumerate(pypdf_texts, start=1)]
 
     return [Page(source=source_name, page=1, text="", ocr=False)]
 

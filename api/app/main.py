@@ -27,17 +27,20 @@ log = logging.getLogger("rahbar.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    from .services import answer as answer_svc
+
     settings = get_settings()
     configure_logging(settings.log_level)
+    answer_svc.reset_cache()
     app.state.settings = settings
     app.state.retriever = get_retriever(settings)
     app.state.provider = get_provider(settings)
-    # Note: embedding model verification is executed during readiness probe (/readyz)
-    # to avoid crashing process startup while allowing Kubernetes to manage traffic gating.
+    app.state.pin_conflict = health.verify_embedding_pin(settings)
     log.info(
         "api started",
         extra={"retriever": settings.retriever, "llm_provider": settings.llm_provider,
-               "embed_model": settings.embed_model, "top_k": settings.top_k},
+               "embed_model": settings.embed_model, "top_k": settings.top_k,
+               "pin_conflict": app.state.pin_conflict},
     )
     yield
 

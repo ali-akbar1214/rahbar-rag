@@ -41,3 +41,39 @@ def test_readyz_model_mismatch_returns_503(monkeypatch: pytest.MonkeyPatch) -> N
         data = resp.json()
         assert data["status"] == "not_ready"
         assert "embedding_model mismatch" in str(data["checks"]["embed_model"])
+
+
+def test_readyz_redis_unreachable_returns_503(monkeypatch: pytest.MonkeyPatch) -> None:
+    class MockHealthyCollection:
+        metadata = {"embed_model": "nomic-embed-text", "dimension": 768}
+
+        def count(self) -> int:
+            return 42
+
+    class MockHealthyChroma:
+        def heartbeat(self) -> None:
+            pass
+
+        def get_collection(self, name: str) -> MockHealthyCollection:
+            return MockHealthyCollection()
+
+    class BrokenRedis:
+        def ping(self) -> None:
+            raise ConnectionError("redis connection refused")
+
+    monkeypatch.setenv("RETRIEVER", "chroma")
+    monkeypatch.setenv("EMBED_MODEL", "nomic-embed-text")
+    monkeypatch.setenv("CACHE_ENABLED", "true")
+
+    import chromadb
+    import redis
+
+    monkeypatch.setattr(chromadb, "HttpClient", lambda **kwargs: MockHealthyChroma())
+    monkeypatch.setattr(redis, "Redis", lambda **kwargs: BrokenRedis())
+
+    with TestClient(app) as client:
+        resp = client.get("/readyz")
+        assert resp.status_code == 503
+        data = resp.json()
+        assert data["status"] == "not_ready"
+        assert "unreachable" in str(data["checks"]["redis"])

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ali-akbar1214/rahbar-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/ali-akbar1214/rahbar-rag/actions/workflows/ci.yml)
 [![CD](https://github.com/ali-akbar1214/rahbar-rag/actions/workflows/cd.yml/badge.svg)](https://github.com/ali-akbar1214/rahbar-rag/actions/workflows/cd.yml)
-[![Coverage](https://img.shields.io/badge/coverage-74%25-brightgreen.svg)](https://github.com/ali-akbar1214/rahbar-rag)
+[![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen.svg)](https://github.com/ali-akbar1214/rahbar-rag)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 **Course**: SE3005 Software Construction & Development — Assignment 02  
@@ -14,9 +14,11 @@
 
 ## 1. Problem Statement and System Overview
 
-General-purpose large language models exhibit high fluency but lack factual ground truth regarding university-specific academic policies. When asked whether a student who failed a prerequisite can register for advanced coursework, generic models fabricate plausible but factually incorrect regulations. **RAHBAR** closes this gap by deploying an enterprise-grade, grounded question-answering architecture on **Kubernetes**. 
+General-purpose language models optimize for fluency, not factuality over your institution's policies. When asked whether a 5th-semester student can register for a course after failing its prerequisite, an ungrounded model invents plausible rules from unrelated universities and cannot distinguish a repealed 2023 policy from its 2026 revision.
 
-The system operates under the principle that **fluency is not factuality**: every answer is strictly synthesized from passages retrieved from an indexed vector database of official FAST-NUCES policies. Citations are strictly validated against retrieved evidence, outdated (superseded) policies are systematically filtered, and queries lacking supporting documentation trigger **honest abstentions** (`answered_from_context: false`).
+**RAHBAR** is a grounded question-answering service over official **FAST-NUCES** regulatory documents, deployed on **Kubernetes**:
+- **One Writer, One Reader, One Shared Pin**: A batch Kubernetes `Job` (and weekly `CronJob`) extracts, cleans, chunks, embeds, and indexes documents into a persistent ChromaDB `StatefulSet`. Three horizontally autoscaled (3–8) stateless FastAPI pods only read the index, gated by a `/readyz` guardrail that verifies `EMBED_MODEL` parity before serving traffic.
+- **Grounded & Honest**: Answers are schema-constrained (`Answer` Pydantic contract), every `[source / section]` citation is verified against retrieved passages, superseded policies are filtered via metadata (`superseded: false` unless an older version is explicitly requested), and out-of-scope or adversarial queries abstain honestly (`answered_from_context: false`).
 
 ---
 
@@ -24,167 +26,150 @@ The system operates under the principle that **fluency is not factuality**: ever
 
 ```mermaid
 graph TD
-    User([Student / Client]) -->|HTTP /| Ingress[Kubernetes Ingress NGINX]
-    Ingress -->|/| UI[rahbar-ui: 2 Replicas Non-Root NGINX]
-    Ingress -->|/api| API[rahbar-api: 3 Replicas FastAPI]
-    
-    subgraph "Data Tier (ClusterIP)"
-        Chroma[(rahbar-chroma: StatefulSet + PVC)]
-        Redis[(rahbar-redis: Semantic Cache)]
+    User([Student / Client]) -->|HTTP Host: rahbar.local| Ingress[Kubernetes Ingress NGINX]
+    Ingress -->|/| UI[rahbar-ui: Deployment x2 Non-Root NGINX]
+    Ingress -->|/api| API[rahbar-api: Deployment x3..8 FastAPI]
+
+    subgraph "Data Tier (ClusterIP Only)"
+        Chroma[(rahbar-chroma: StatefulSet x1 + 2Gi PVC)]
+        Redis[(rahbar-redis: Deployment + 1Gi PVC)]
     end
-    
+
     subgraph "Batch Ingestion Tier (Sole Writer)"
-        Job[rahbar-indexer-job / CronJob] -->|Write Chunks & Pin| Chroma
-        Corpus[(FAST-NUCES Policy Corpus)] --> Job
+        Job[rahbar-indexer-job + Weekly CronJob] -->|Upsert Chunks + Pin + indexed_at| Chroma
+        Corpus[(FAST-NUCES Public Corpus)] --> Job
     end
-    
-    API -->|1. Lookup Vector Similarity >= 0.95| Redis
-    API -->|2. Query Top-K Filter Superseded| Chroma
-    API -->|3. Constrained JSON Generation| LLM[Hosted LLM / Ollama]
-    API -->|4. Validate Citations & Never-Cache Abstention| Redis
-    
-    HPA[Horizontal Pod Autoscaler 3-8 Pods] -.->|Monitor CPU| API
+
+    API -->|1. Semantic Cache >= 0.95 & Generation Sync| Redis
+    API -->|2. Top-K Query + Superseded Metadata Filter| Chroma
+    API -->|3. Constrained JSON Generation| LLM[Hosted LLM / Ollama Host]
+    API -->|4. Citation Check & Never-Cache Guardrail| Redis
+
+    HPA[HPA: min 3, max 8] -.->|CPU Utilization| API
 ```
 
-**Why ChromaDB is a `StatefulSet` (not a `Deployment`)**: Unlike stateless `rahbar-api` replicas, ChromaDB maintains an embedded SQLite + HNSW segment store on disk that does not support concurrent multi-pod writers. Using a `StatefulSet` (`rahbar-chroma-0`) with `volumeClaimTemplates` (`chroma-data`, `ReadWriteOnce`) provides a stable network identity and deterministic 1-to-1 PVC reattachment across pod restarts or node rescheduling without risking lock corruption during rolling replacements (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [ADR 0001](docs/adr/0001-indexer-as-job.md)).
-
-**Corpus Acquisition & Integrity**: Because the repository is public, third-party FAST-NUCES PDFs are not committed to Git (`corpus/raw/` is `.gitignore`d). Instead, [corpus/MANIFEST.md](corpus/MANIFEST.md) records every public source URL, byte size, and SHA-256 checksum, and [corpus/fetch.py](corpus/fetch.py) downloads and verifies (`python corpus/fetch.py --verify`) exact byte parity before indexing.
+- **Why ChromaDB is a `StatefulSet` (not a `Deployment`)**: ChromaDB persists SQLite catalog tables and HNSW binary index segments on disk (`/data`), which cannot tolerate two pods concurrently writing or racing on a `ReadWriteOnce` PVC during a `Deployment` rolling update. A 1-replica `StatefulSet` with `volumeClaimTemplates` guarantees deterministic pod identity (`rahbar-chroma-0`) and ordered 1-to-1 PVC rebinding across restarts (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and [`docs/adr/0001-indexer-as-job.md`](docs/adr/0001-indexer-as-job.md)).
+- **Corpus Provenance & Embedding Host**: Because this repository is public, third-party FAST-NUCES PDFs are not committed to Git (`corpus/raw/` is `.gitignore`d). [`corpus/MANIFEST.md`](corpus/MANIFEST.md) records every public URL, byte count, and SHA-256 checksum alongside [`corpus/fetch.py`](corpus/fetch.py). Both the indexer Job and the API embed via the shared `EMBED_MODEL: nomic-embed-text` served by Ollama on `host.minikube.internal:11434` (while LLM generation is pluggable via `LLM_PROVIDER`: `hosted`, `ollama-host`, `ollama-incluster`, or `stub`).
 
 ---
 
 ## 3. API Specification
 
-The API exposes the following endpoints (served internally on port 8000, routed via Ingress):
-
-| Method | Endpoint | Description | Health / Dependency Rule |
+| Method | Endpoint | Description | Health / Guardrail Behavior |
 |---|---|---|---|
-| GET | `/healthz` | Process liveness probe. Returns HTTP 200 if ASGI server is responsive. | Strictly independent: touches zero external dependencies. |
-| GET | `/readyz` | Cluster readiness probe. Returns HTTP 200 only when Chroma is connected, collection is non-empty, and collection metadata matches `EMBED_MODEL`. | Returns HTTP 503 if dependencies fail or embedding model mismatches. |
-| GET | `/metrics` | Prometheus metrics scraping endpoint (request counters, latency histograms). | Internal metric collector. |
-| POST | `/api/ask` | Question-answering endpoint. Takes `{"question": "..."}` and returns structured `AskResponse`. | Validates input length (3 to 500 chars), checks semantic cache, queries Chroma, invokes LLM with fallback, and verifies citations. |
+| GET | `/healthz` | Process liveness probe (`HTTP 200`). | Touches **zero** external dependencies (prevents dependency slowdowns from causing restart storms). |
+| GET | `/readyz` | Traffic readiness probe (`HTTP 200` / `503`). | Requires Chroma reachable, collection non-empty, `EMBED_MODEL` matching collection metadata, and Redis reachable. |
+| GET | `/metrics` | Prometheus metrics endpoint. | Exports request count/latency, retrieval & generation latency, cache hits/misses/ratio, abstentions, fallbacks, and tokens in/out. |
+| POST | `/api/ask` | Grounded Q&A endpoint (`3..500` chars). | Checks semantic cache, blocks prompt injection, filters `superseded` chunks, validates citations, and abstains below `RELEVANCE_FLOOR`. |
 
 ---
 
 ## 4. Quick Start: Clean Clone to Answered Question
 
 ### Prerequisites
-- Docker (v24+)
-- Minikube or Kind cluster
-- `kubectl` and `kustomize`
-- Python 3.12+ (WSL 2 on Windows)
+- Docker (`v24+`), Minikube, `kubectl` (with `kustomize`), Python `3.12+`, and [Ollama](https://ollama.com) on the host for `nomic-embed-text` embeddings (plus `llama3.2:3b` if using `LLM_PROVIDER=ollama-host`).
 
-### 1. Cluster Initialization
-Start Minikube with Calico CNI (required for NetworkPolicy enforcement) and enable necessary add-ons:
+### 1. Start Minikube (with Calico CNI) & Host Embedding Server
 ```bash
+# Start Minikube with Calico so NetworkPolicies are enforced
 minikube start --driver=docker --cni=calico --memory=6144 --cpus=4
 minikube addons enable metrics-server
 minikube addons enable ingress
+
+# Run Ollama on all interfaces so pods reach host.minikube.internal:11434
+OLLAMA_HOST=0.0.0.0 ollama serve &
+ollama pull nomic-embed-text
+ollama pull llama3.2:3b   # optional if using LLM_PROVIDER=ollama-host instead of hosted
 ```
 
-### 2. Fetch Corpus & Configure Credentials
-Fetch the official FAST-NUCES policy corpus (and verify SHA-256 checksums against `corpus/MANIFEST.md`), then create the Kubernetes Secret from the command line:
+### 2. Build & Load Images (or Use SHA-Pinned Docker Hub Images)
+`k8s/base/` pins published SHA-tagged images (`aliakbar1214/rahbar-*:9031a74de8d0bca139e230515f3b861917f8ef42`). To build from your local checkout and load directly into Minikube (`k8s/overlays/dev`):
 ```bash
-python corpus/fetch.py && python corpus/fetch.py --verify
+docker build -t rahbar-api:dev api
+docker build -t rahbar-indexer:dev indexer
+docker build -t rahbar-ui:dev ui
+minikube image load rahbar-api:dev
+minikube image load rahbar-indexer:dev
+minikube image load rahbar-ui:dev
+```
+
+### 3. Create Namespace & Secret (Never Committed to Git)
+```bash
 kubectl apply -f k8s/base/namespace.yaml
-kubectl create secret generic rahbar-secret -n rahbar --from-literal=LLM_API_KEY="your-llm-api-key"
+kubectl create secret generic rahbar-secret -n rahbar \
+  --from-literal=LLM_API_KEY="${LLM_API_KEY:-ollama-local}"
 ```
+*(If running without a hosted Groq key, patch `LLM_PROVIDER` to `ollama-host`: `kubectl patch configmap rahbar-config -n rahbar --type merge -p '{"data":{"LLM_PROVIDER":"ollama-host","LLM_MODEL":"llama3.2:3b"}}'` after Step 4.1.)*
 
-### 3. Deploy the Stack in Exact Apply Order
-Apply base infrastructure, dedicated ServiceAccounts, data tiers, batch ingestion, and serving workloads:
+### 4. Apply Manifests in Exact Documented Order
 ```bash
-# 1. Namespace, Workload ServiceAccounts & Configuration
+# 4.1 Identity, Configuration & Zero-Trust NetworkPolicies
 kubectl apply -f k8s/base/namespace.yaml
 kubectl apply -f k8s/base/serviceaccounts.yaml
 kubectl apply -f k8s/base/configmap.yaml
-
-# 2. Network Security Policies
 kubectl apply -f k8s/base/networkpolicy.yaml
 
-# 3. Persistent Data Tiers (ChromaDB StatefulSet + Redis)
+# 4.2 Stateful Data Tiers (ChromaDB StatefulSet + Redis Semantic Cache)
 kubectl apply -f k8s/base/chroma-statefulset.yaml
 kubectl apply -f k8s/base/redis.yaml
-kubectl rollout status statefulset/rahbar-chroma -n rahbar --timeout=120s
-kubectl rollout status deployment/rahbar-redis -n rahbar --timeout=60s
+kubectl rollout status statefulset/rahbar-chroma -n rahbar --timeout=180s
+kubectl rollout status deployment/rahbar-redis -n rahbar --timeout=120s
 
-# 4. Ingestion Job (Indexes Corpus into ChromaDB)
+# 4.3 One-Shot Indexer Job (auto-fetches & hashes FAST-NUCES corpus into /tmp/rahbar-corpus)
 kubectl apply -f k8s/base/indexer-job.yaml
 kubectl wait --for=condition=complete job/rahbar-indexer-job -n rahbar --timeout=300s
 
-# 5. Serving Tier (API 3 Replicas + UI + HPA + Ingress)
+# 4.4 Stateless Serving Tier, Autoscaler, Ingress & Weekly Re-index CronJob
 kubectl apply -f k8s/base/api-deployment.yaml
 kubectl apply -f k8s/base/ui-deployment.yaml
 kubectl apply -f k8s/base/hpa.yaml
 kubectl apply -f k8s/base/ingress.yaml
 kubectl apply -f k8s/base/reindex-cronjob.yaml
 
-# Wait for complete rollout
 kubectl rollout status deployment/rahbar-api -n rahbar --timeout=180s
 kubectl rollout status deployment/rahbar-ui -n rahbar --timeout=120s
 ```
+*(Tip: `kubectl apply -k k8s/overlays/dev` applies the same stack using the locally loaded `:dev` images.)*
 
-### 4. How to Run the Indexer Manually
-To trigger an on-demand re-indexing run (e.g. following corpus updates):
+### 5. Re-index on Demand (Zero Downtime, Automatic Cache Invalidation)
 ```bash
-# Delete any previous completed job run
-kubectl delete job rahbar-indexer-job -n rahbar --ignore-not-found
-
-# Create a manual job execution from the template
-kubectl apply -f k8s/base/indexer-job.yaml
-
-# Or trigger from the weekly CronJob
-kubectl create job --from=cronjob/rahbar-reindex-cronjob manual-reindex -n rahbar
+kubectl create job --from=cronjob/rahbar-reindex-cronjob manual-reindex-1 -n rahbar
 ```
 
-### 5. Ask a Question
-Forward the ingress or send a direct curl query to verify grounding:
+### 6. Ask Questions Through the Ingress
+On macOS/Windows with the Docker driver, run `minikube tunnel` in a separate terminal and use `127.0.0.1` (on Linux, use `$(minikube ip)`):
 ```bash
-curl -X POST http://rahbar.local/api/ask \
+INGRESS_IP="${INGRESS_IP:-127.0.0.1}"
+
+# Grounded question -> cited answer (answered_from_context: true)
+curl -s -X POST "http://${INGRESS_IP}/api/ask" \
+  -H "Host: rahbar.local" \
   -H "Content-Type: application/json" \
   -d '{"question": "What CGPA does an undergraduate need to stay off academic warning?"}'
-```
 
-Sample grounded JSON response:
-```json
-{
-  "request_id": "9a1f28b4c2",
-  "answer": "According to clause 5.4, an undergraduate student must maintain a minimum CGPA of 2.00 to stay off academic warning.",
-  "citations": [
-    {
-      "source": "academic-rules-handbook-jun-2026.pdf",
-      "section": "5.4 Academic Warning",
-      "page": 18
-    }
-  ],
-  "answered_from_context": true,
-  "confidence": "high",
-  "retrieved": [
-    {
-      "chunk_id": "academic-rules-handbook-jun-2026.pdf-p18-0042",
-      "source": "academic-rules-handbook-jun-2026.pdf",
-      "section": "5.4 Academic Warning",
-      "page": 18,
-      "score": 0.892
-    }
-  ],
-  "provider": "hosted"
-}
+# Out-of-scope question (absent topic) -> honest abstention (answered_from_context: false)
+curl -s -X POST "http://${INGRESS_IP}/api/ask" \
+  -H "Host: rahbar.local" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What are the meal plan charges for the on-campus boys hostel?"}'
 ```
 
 ---
 
-## 5. Verification and Automated Quality Gates
+## 5. Verification, Evaluation & Submission Checks
 
-Run the official submission linter:
 ```bash
+# Offline unit tests + >=60% coverage gate (stubs only: no network, no model)
+PYTHONPATH=.:api:indexer pytest --cov=app --cov-report=term-missing --cov-fail-under=60 api/tests indexer/tests
+
+# Ruff + Mypy static analysis
+ruff check api/ indexer/ eval/ corpus/
+(cd api && mypy --ignore-missing-imports app)
+(cd indexer && mypy --ignore-missing-imports pipeline)
+
+# Evaluate live stack against the 18-question golden set & enforce CI regression gate
+python eval/run_eval.py --api "http://${INGRESS_IP:-127.0.0.1}" --host rahbar.local
+
+# Mechanical submission linter
 python scripts/check_submission.py
-```
-
-Run offline unit test suite:
-```bash
-pytest --cov=app --cov-report=term-missing api/tests indexer/tests
-```
-
-Execute evaluation gate against golden test set:
-```bash
-python eval/run_eval.py --api http://127.0.0.1:8000
 ```

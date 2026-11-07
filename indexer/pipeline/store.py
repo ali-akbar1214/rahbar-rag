@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .config import IndexerSettings
@@ -29,11 +30,15 @@ def store(chunks: list[Chunk], vectors: list[list[float]], settings: IndexerSett
     client = get_client(settings)
     dimension = len(vectors[0]) if vectors and len(vectors) > 0 else 768
 
-    # Record the embedding model pin and dimension in the collection metadata
+    # Record the embedding model pin, vector dimension, and monotonic index generation
+    # timestamp in collection metadata (sections 3.3 & 4.4). API replicas observe `indexed_at`
+    # to automatically expire stale semantic cache entries whenever a re-index Job finishes.
+    indexed_at = str(time.time_ns())
     collection_metadata = {
         "embed_model": settings.embed_model,
         "embedding_model": settings.embed_model,
         "dimension": dimension,
+        "indexed_at": indexed_at,
         "hnsw:space": "cosine",
     }
 

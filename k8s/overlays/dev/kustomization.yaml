@@ -6,6 +6,17 @@ namespace: rahbar
 resources:
   - ../../base
 
+images:
+  - name: aliakbar1214/rahbar-api
+    newName: rahbar-api
+    newTag: dev
+  - name: aliakbar1214/rahbar-indexer
+    newName: rahbar-indexer
+    newTag: dev
+  - name: aliakbar1214/rahbar-ui
+    newName: rahbar-ui
+    newTag: dev
+
 patches:
   - target:
       kind: ConfigMap

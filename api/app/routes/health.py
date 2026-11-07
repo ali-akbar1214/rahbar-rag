@@ -16,6 +16,38 @@ log = logging.getLogger("rahbar.health")
 router = APIRouter()
 
 
+def verify_embedding_pin(settings: Settings) -> str | None:
+    """Compare Chroma collection metadata against `settings.embed_model` at startup (section 4.4).
+
+    Returns a conflict message if a mismatch already exists, or None when clean / not yet indexed.
+    """
+    if settings.retriever == "stub":
+        return None
+    try:
+        import chromadb
+        from chromadb.config import Settings as ChromaSettings
+
+        chroma_client = chromadb.HttpClient(
+            host=settings.chroma_host,
+            port=settings.chroma_port,
+            settings=ChromaSettings(anonymized_telemetry=False),
+        )
+        collection = chroma_client.get_collection(name=settings.collection)
+        meta = getattr(collection, "metadata", None) or {}
+        recorded_model = meta.get("embed_model") or meta.get("embedding_model")
+        if recorded_model and recorded_model != settings.embed_model:
+            conflict = (
+                f"embedding_model mismatch: index has {recorded_model} "
+                f"(dim={meta.get('dimension', 'unknown')}) != configured {settings.embed_model}"
+            )
+            log.error("startup embedding pin conflict: %s", conflict)
+            return conflict
+    except Exception:
+        # Index may not exist yet before the indexer Job finishes; /readyz withholds readiness until it does.
+        return None
+    return None
+
+
 @router.get("/healthz")
 def healthz() -> dict[str, str]:
     """Is the process alive? Must never touch Chroma, Redis, or the LLM."""
@@ -24,16 +56,15 @@ def healthz() -> dict[str, str]:
 
 @router.get("/readyz")
 def readyz(request: Request, response: Response) -> dict[str, object]:
-    """Readiness probe verifying Chroma, non-empty collection, and embedding-model pin."""
+    """Readiness probe verifying Chroma, non-empty collection, Redis, and embedding-model pin."""
     settings: Settings = request.app.state.settings
     checks: dict[str, object] = {}
     is_ready = True
 
-    # If running with stubs (e.g. offline unit testing or CI fixture), report ready
     if settings.retriever == "stub":
         return {"status": "ready", "checks": {"retriever": "stub", "stub": True}}
 
-    # 1. Check Chroma reachability and collection
+    # 1. Check Chroma reachability and collection non-emptiness
     try:
         import chromadb
         from chromadb.config import Settings as ChromaSettings
@@ -46,24 +77,23 @@ def readyz(request: Request, response: Response) -> dict[str, object]:
         chroma_client.heartbeat()
 
         collection = chroma_client.get_collection(name=settings.collection)
-        chunk_count = collection.count()
+        item_count = collection.count()
 
-        # Check collection is non-empty
-        if chunk_count == 0:
+        if item_count == 0:
             checks["chroma_collection"] = "empty: count is 0"
             is_ready = False
         else:
-            checks["chroma_collection"] = f"ok ({chunk_count} chunks)"
+            checks["chroma_collection"] = f"ok ({item_count} items)"
 
-        # 2. Embedding-model mismatch guardrail
-        # Reads recorded embed_model in collection metadata and compares to current EMBED_MODEL
-        meta = collection.metadata or {}
+        # 2. Embedding-model mismatch guardrail (section 4.4)
+        meta = getattr(collection, "metadata", None) or {}
         recorded_model = meta.get("embed_model") or meta.get("embedding_model")
 
         if recorded_model and recorded_model != settings.embed_model:
             log.error(
-                "embedding model mismatch detected: index uses %s but API configured with %s",
+                "embedding model mismatch detected: index uses %s (dim=%s) but API configured with %s",
                 recorded_model,
+                meta.get("dimension", "unknown"),
                 settings.embed_model,
             )
             checks["embed_model"] = (
@@ -77,7 +107,7 @@ def readyz(request: Request, response: Response) -> dict[str, object]:
         checks["chroma"] = f"unreachable: {exc}"
         is_ready = False
 
-    # 3. Check Redis reachability if cache enabled
+    # 3. Check Redis reachability when semantic cache is enabled (section 4.3)
     if settings.cache_enabled:
         try:
             import redis
@@ -90,8 +120,8 @@ def readyz(request: Request, response: Response) -> dict[str, object]:
             r.ping()
             checks["redis"] = "ok"
         except Exception as exc:
-            # Redis degradation logs warning; in-memory cache acts as fallback
-            checks["redis"] = f"degraded: {exc}"
+            checks["redis"] = f"unreachable: {exc}"
+            is_ready = False
 
     if not is_ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE

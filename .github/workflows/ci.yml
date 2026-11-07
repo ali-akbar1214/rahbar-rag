@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [dev]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -184,7 +186,7 @@ jobs:
 
       - name: Run indexer Job on fixture corpus
         run: |
-          sed "s|aliakbar1214/rahbar-indexer:v1.0.0|aliakbar1214/rahbar-indexer:${{ github.sha }}|g" \
+          sed -E "s|aliakbar1214/rahbar-indexer:[a-zA-Z0-9._-]+|aliakbar1214/rahbar-indexer:${{ github.sha }}|g" \
             k8s/base/indexer-job.yaml | kubectl apply -f -
           kubectl wait --for=condition=complete job/rahbar-indexer-job -n rahbar --timeout=180s
           kubectl logs job/rahbar-indexer-job -n rahbar
@@ -198,9 +200,10 @@ jobs:
             --for=condition=ready pod \
             --selector=app.kubernetes.io/component=controller \
             --timeout=180s
-          sed "s|aliakbar1214/rahbar-api:v1.0.0|aliakbar1214/rahbar-api:${{ github.sha }}|g" \
+          kubectl apply -f k8s/base/networkpolicy.yaml
+          sed -E "s|aliakbar1214/rahbar-api:[a-zA-Z0-9._-]+|aliakbar1214/rahbar-api:${{ github.sha }}|g" \
             k8s/base/api-deployment.yaml | kubectl apply -f -
-          sed "s|aliakbar1214/rahbar-ui:v1.0.0|aliakbar1214/rahbar-ui:${{ github.sha }}|g" \
+          sed -E "s|aliakbar1214/rahbar-ui:[a-zA-Z0-9._-]+|aliakbar1214/rahbar-ui:${{ github.sha }}|g" \
             k8s/base/ui-deployment.yaml | kubectl apply -f -
           for i in $(seq 1 5); do
             kubectl apply -f k8s/base/ingress.yaml && break

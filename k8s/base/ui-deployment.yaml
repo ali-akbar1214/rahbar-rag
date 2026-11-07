@@ -32,7 +32,7 @@ spec:
         fsGroup: 101
       containers:
         - name: ui
-          image: aliakbar1214/rahbar-ui:v1.0.0
+          image: aliakbar1214/rahbar-ui:9031a74de8d0bca139e230515f3b861917f8ef42
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
