@@ -17,7 +17,7 @@ Following Section 5.5, we deliberately broke all six stages of the pipeline one 
 
 ## Stage B · Chunking — Fixed-Size 100-Token Chunks With Zero Overlap
 - **How we broke it**: Replaced structure-aware splitting in `indexer/pipeline/chunk.py` with a naive fixed 400-character (~100-token) slice and `CHUNK_OVERLAP=0`.
-- **Symptom**: Answers to multi-condition clauses (e.g., `q04` prerequisite failure, `q06` plagiarism penalties) became incomplete or missed exact thresholds, and `eval/run_eval.py` failed the CI gate (`recall@5` dropped from `0.8750` to `0.6200`).
+- **Symptom**: Answers to multi-condition clauses (e.g., `q04` suspension of registration, `q06` plagiarism penalties) became incomplete or missed exact thresholds, and `eval/run_eval.py` failed the CI gate (`recall@5` dropped from `0.9333` to `0.6200`).
 - **Blind Diagnosis (Metrics & Logs)**:
   - API JSON request logs showed chunks retrieved from the right `source`, but `section` was `"General Overview"` because clause headers had been sliced into the tail of the preceding chunk with zero overlap.
   - `eval/results.json` showed `recall@5` dropping > 25 points while `rahbar_fallbacks_total` stayed `0` (proving generation was healthy and Stage B/C was at fault).

@@ -6,12 +6,14 @@ network. Keep them passing, and add your own next to them (section 6).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
-def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setenv("RETRIEVER", "stub")
     monkeypatch.setenv("LLM_PROVIDER", "stub")
     from app.main import app

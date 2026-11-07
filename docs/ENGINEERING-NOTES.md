@@ -26,8 +26,8 @@ If `livenessProbe` points to `/readyz` and `readinessProbe` points to `/healthz`
 - **Wrong-Limit Exit Code**: Setting `limits.memory` below `680Mi` (e.g., `512Mi`) triggers the Linux kernel cgroup OOM killer (`SIGKILL`, signal `9`), terminating the container with **Exit Code `137`** (`128 + 9`, `Reason: OOMKilled`).
 
 ## 5. `recall@5` by Question Type: Where It Is Worst and Why
-- **Worst Category**: `exact` (`0.8333` in [`eval/results.json`](../eval/results.json#L9)), trailing `ordinary` (`0.9000` at `#L7`) and `version` (`0.8500` at `#L8`).
-- **Why Dense Embeddings Struggle**: Bi-encoder dense models (`nomic-embed-text`, 768 dims) compress whole-chunk semantics into a single continuous vector. They excel at conceptual synonymy (`ordinary` questions), but smooth over rare lexical identifiers—clause numbers (`1.21` vs `5.6` in [`eval/golden.yaml`](../eval/golden.yaml#L75-L95)), course codes (`CS4032`), and exact PKR fee numerals (`11,500`)—mapping distinct numbers into overlapping neighborhood regions.
+- **Worst Category**: `exact` (`0.8000` in [`eval/results.json`](../eval/results.json#L9)), trailing `ordinary` (`1.0000` at `#L7`) and `version` (`1.0000` at `#L8`), with overall `recall@5 = 0.9333`.
+- **Why Dense Embeddings Struggle**: Bi-encoder dense models (`nomic-embed-text`, 768 dims) compress whole-chunk semantics into a single continuous vector. They excel at conceptual synonymy (`ordinary` questions), but smooth over rare lexical identifiers—clause numbers (`1.21`, `5.6`, `3.12` in [`eval/golden.yaml`](../eval/golden.yaml#L75-L108)), course codes (`CS4032`), and exact PKR fee numerals (`12,000`)—mapping distinct numbers or phrases like `"five-year limit"` (`q15`, clause `3.12` credit transfer) into overlapping degree-duration neighborhood regions.
 - **RAG Lecture Technique That Addresses It**: **Hybrid Retrieval (Sparse BM25 + Dense Vector Search) combined with Reciprocal Rank Fusion (RRF)**, optionally followed by a cross-encoder reranker, so exact token/clause hits receive high lexical rank alongside semantic matches.
 
 ## 6. `EMBED_MODEL` Changed on API Only: Guardrail Action

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from typing import Any
 
 import httpx
 from pydantic import ValidationError
@@ -101,7 +102,7 @@ class HostedProvider:
             "Authorization": f"Bearer {self.api_key}",
         }
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature,
@@ -113,6 +114,10 @@ class HostedProvider:
             try:
                 with httpx.Client(timeout=15.0) as client:
                     resp = client.post(url, json=payload, headers=headers)
+                    if resp.status_code == 404 and attempt < max_retries:
+                        log.warning("model %s returned 404; retrying with fallback model openai/gpt-oss-20b", payload["model"])
+                        payload["model"] = "openai/gpt-oss-20b"
+                        continue
                     resp.raise_for_status()
                     data = resp.json()
                     usage = data.get("usage") or {}

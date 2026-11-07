@@ -42,16 +42,6 @@ def store(chunks: list[Chunk], vectors: list[list[float]], settings: IndexerSett
         "hnsw:space": "cosine",
     }
 
-    # If an older collection exists with a different embed_model, drop and recreate cleanly (section 4.4)
-    try:
-        existing = client.get_collection(name=settings.collection)
-        ex_meta = getattr(existing, "metadata", None) or {}
-        ex_model = ex_meta.get("embed_model") or ex_meta.get("embedding_model")
-        if ex_model and ex_model != settings.embed_model:
-            client.delete_collection(name=settings.collection)
-    except Exception:
-        pass
-
     # Retrieve or create collection with metadata
     collection = client.get_or_create_collection(
         name=settings.collection,

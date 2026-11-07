@@ -8,6 +8,11 @@ from collections import Counter
 from .models import Document, Page
 
 
+def _norm_banner(line: str) -> str:
+    """Normalize digits and spacing so running headers/footers with page numbers match across pages."""
+    return re.sub(r"\s+", " ", re.sub(r"\d+", "#", line.strip())).strip().lower()
+
+
 def clean(doc: Document) -> Document:
     """Strip headers and footers that repeat on every page; keep headings and
     section boundaries, because chunking and citations depend on them.
@@ -15,31 +20,36 @@ def clean(doc: Document) -> Document:
     if not doc.pages:
         return doc
 
-    # Detect repeating header and footer lines across pages
-    first_lines: Counter[str] = Counter()
-    last_lines: Counter[str] = Counter()
+    # Detect repeating header (first 3 lines) and footer (last 2 lines) banners across pages
+    header_counts: Counter[str] = Counter()
+    footer_counts: Counter[str] = Counter()
 
     for p in doc.pages:
         lines = [ln.strip() for ln in p.text.splitlines() if ln.strip()]
-        if len(lines) >= 1:
-            first_lines[lines[0]] += 1
-        if len(lines) >= 2:
-            last_lines[lines[-1]] += 1
+        for ln in lines[:3]:
+            if len(ln) < 100:
+                header_counts[_norm_banner(ln)] += 1
+        for ln in lines[-2:]:
+            if len(ln) < 100 and len(lines) >= 3:
+                footer_counts[_norm_banner(ln)] += 1
 
     total_pages = len(doc.pages)
-    threshold = max(2, int(total_pages * 0.4))
+    threshold = max(2, int(total_pages * 0.35))
 
-    repeating_headers = {ln for ln, count in first_lines.items() if count >= threshold and len(ln) < 100}
-    repeating_footers = {ln for ln, count in last_lines.items() if count >= threshold and len(ln) < 100}
+    repeating_headers = {k for k, count in header_counts.items() if count >= threshold}
+    repeating_footers = {k for k, count in footer_counts.items() if count >= threshold}
 
     cleaned_pages: list[Page] = []
     for p in doc.pages:
         lines = p.text.splitlines()
         processed_lines: list[str] = []
-        for line in lines:
+        for idx, line in enumerate(lines):
             stripped = line.strip()
+            norm = _norm_banner(stripped) if stripped else ""
             # Drop repeating page numbers / headers / footers
-            if stripped in repeating_headers or stripped in repeating_footers:
+            if idx < 5 and norm in repeating_headers:
+                continue
+            if idx >= max(0, len(lines) - 4) and norm in repeating_footers:
                 continue
             if re.fullmatch(r"Page\s+\d+(\s+of\s+\d+)?|\d+", stripped, re.IGNORECASE):
                 continue
