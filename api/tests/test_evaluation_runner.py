@@ -51,6 +51,14 @@ def test_citation_validity_hallucinated() -> None:
     assert citation_validity(resp) == 0.5
 
 
+def test_citation_validity_rejects_fabricated_section_on_same_source() -> None:
+    resp = {
+        "citations": [{"source": "rules.pdf", "section": "9.99 Invented"}],
+        "retrieved": [{"source": "rules.pdf", "section": "1.21 Attendance", "score": 0.9}],
+    }
+    assert citation_validity(resp) == 0.0
+
+
 def test_gate_pass_and_failure() -> None:
     good_results = {
         "recall@5": 0.88,
