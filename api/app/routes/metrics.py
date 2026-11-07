@@ -7,7 +7,7 @@ retrieval latency, generation latency, cache hits, abstentions, fallbacks, token
 from __future__ import annotations
 
 from fastapi import APIRouter, Response
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
 router = APIRouter()
 
@@ -36,10 +36,28 @@ GENERATION_LATENCY = Histogram(
 )
 CACHE_HITS = Counter("rahbar_cache_hits_total", "Total semantic cache hits")
 CACHE_MISSES = Counter("rahbar_cache_misses_total", "Total semantic cache misses")
+CACHE_HIT_RATIO = Gauge("rahbar_cache_hit_ratio", "Ratio of semantic cache hits to total lookups")
 ABSTENTIONS = Counter("rahbar_abstentions_total", "Total honest abstentions")
 FALLBACKS = Counter("rahbar_fallbacks_total", "Total generation fallbacks")
 TOKENS_IN = Counter("rahbar_tokens_in_total", "Prompt input tokens")
 TOKENS_OUT = Counter("rahbar_tokens_out_total", "Generated output tokens")
+
+_cache_hits_count = 0
+_cache_misses_count = 0
+
+
+def record_cache_lookup(hit: bool) -> None:
+    """Increment hit/miss counters and update the cache hit ratio gauge."""
+    global _cache_hits_count, _cache_misses_count
+    if hit:
+        _cache_hits_count += 1
+        CACHE_HITS.inc()
+    else:
+        _cache_misses_count += 1
+        CACHE_MISSES.inc()
+    total = _cache_hits_count + _cache_misses_count
+    if total > 0:
+        CACHE_HIT_RATIO.set(round(_cache_hits_count / total, 6))
 
 
 @router.get("/metrics")
