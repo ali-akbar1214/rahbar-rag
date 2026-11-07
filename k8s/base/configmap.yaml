@@ -11,6 +11,7 @@ data:
   CHROMA_PORT: "8000"
   CHROMA_COLLECTION: "rahbar"
   TOP_K: "5"
+  # Low temperature (0.2 in [0.0, 0.3]) keeps policy citations and JSON schema generation deterministic without suppressing syntactic fluency.
   TEMPERATURE: "0.2"
   LLM_MODEL: "llama-3.3-70b-versatile"
   OLLAMA_URL: "http://host.minikube.internal:11434"
@@ -23,5 +24,6 @@ data:
   CACHE_GENERATION_ID: "v1"
   LOG_LEVEL: "INFO"
   CORPUS_DIR: "/corpus"
+  AUTO_FETCH_CORPUS: "true"
   CHUNK_SIZE: "400"
   CHUNK_OVERLAP: "50"

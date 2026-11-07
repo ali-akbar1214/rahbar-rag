@@ -42,7 +42,11 @@ spec:
   policyTypes:
     - Ingress
   ingress:
-    - ports:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
         - protocol: TCP
           port: 8080
 ---
@@ -60,7 +64,15 @@ spec:
     - Ingress
     - Egress
   ingress:
-    - ports:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - podSelector:
+            matchLabels:
+              app: rahbar
+              component: ui
+      ports:
         - protocol: TCP
           port: 8000
   egress:
@@ -83,6 +95,8 @@ spec:
     - ports:
         - protocol: TCP
           port: 443
+        - protocol: TCP
+          port: 11434
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -155,4 +169,8 @@ spec:
           port: 8000
     - ports:
         - protocol: TCP
+          port: 80
+        - protocol: TCP
           port: 443
+        - protocol: TCP
+          port: 11434
