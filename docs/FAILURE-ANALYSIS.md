@@ -1,77 +1,65 @@
-# RAG Pipeline Failure Analysis: Deliberate Injections, Symptoms, and Diagnostics
+# RAG Pipeline Failure Analysis: Breaking One Stage at a Time
 
-This document analyzes deliberate failure injections across the six pipeline stages (A through F), demonstrating the exact metrics, log signatures, and diagnostic commands required to identify root causes.
-
----
-
-## Stage A · Extraction (Scanned PDF Table Collapse)
-- **What we broke**: Disabled the OCR fallback in `extract.py` and processed the scanned image-only PDF (`Faculty Entrepreneurship Policy`) with raw text extraction alone.
-- **Symptom**: Ingestion silently produced empty text buffers (`len(text) == 0`). In the chat UI, questions regarding startup IP ownership resulted in false abstentions (`answered_from_context: false`).
-- **Diagnosis (as if uncaused)**:
-  * Inspection command: `pdffonts corpus/raw/faculty-entrepreneurship-policy.pdf` showed an empty font descriptor table.
-  * Extractor log check: `jq '.msg == "chunked"' indexer.log` showed 0 chunks generated for the document.
-- **Remedy**: Re-enabled `pdf2image` rasterization piped to `pytesseract` OCR, and added structured tabular parsing via `pdfplumber` for markdown conversion.
+Following Section 5.5, we deliberately broke all six stages of the pipeline one at a time on isolated runs and recorded the user-visible symptom, how we would diagnose it blind from our Prometheus `/metrics` and JSON stdout logs, the responsible stage, and the code remedy. Remember the lecture rule: **only Stage F is the model's fault—always check A through E first.**
 
 ---
 
-## Stage B · Chunking (Zero Overlap & Arbitrary Character Windowing)
-- **What we broke**: Replaced structure-aware chunking with a rigid 200-character split without overlap (`CHUNK_OVERLAP=0`).
-- **Symptom**: `recall@5` plummeted from 0.875 to 0.620. Questions quoting specific policy conditions failed because clause headings were severed from their operative text.
-- **Diagnosis (as if uncaused)**:
-  * Evaluation runner output: `eval/run_eval.py` reported:
-    `Gate Failure: recall@5 dropped from baseline 0.8750 to 0.6200`.
-  * Chunk inspection in Chroma:
-    `python -c "import chromadb; c=chromadb.HttpClient().get_collection('rahbar'); print(c.peek(5)['metadatas'])"`
-    revealed section headers recorded as "General" or severed mid-word.
-- **Remedy**: Restored regex heading detection (`HEADING_PATTERN`) and hierarchical splitting on double newlines with a 50-character sliding overlap.
+## Stage A · Extraction — Index the Scanned PDF Without OCR
+- **How we broke it**: Disabled the `pytesseract` / `pdf2image` branch in `indexer/pipeline/extract.py` and indexed `faculty-entrepreneurship-and-technical-start-ups-policy.pdf` with native PDF text extraction only.
+- **Symptom**: Every question about faculty spin-out equity or IP ownership returned an abstention (`answered_from_context: false`), while handbook questions continued working normally.
+- **Blind Diagnosis (Metrics & Logs)**:
+  - `rahbar_abstentions_total` spiked on entrepreneurship queries, and the API per-request JSON log (`msg: "answered"`) showed `scores: [0.11, 0.09]` (none from `faculty-entrepreneurship-*.pdf`).
+  - Checking the indexer Job logs (`kubectl logs job/rahbar-indexer-job -n rahbar`) showed `{"msg": "chunked", "source": "faculty-entrepreneurship-and-technical-start-ups-policy.pdf", "chunks": 0}`.
+  - Running `pdffonts` on the raw PDF confirmed an empty font table (scanned image-only PDF).
+- **Remedy**: Enabled page-level `< 30` char detection in `extract.py` with `pdf2image` rasterization + `pytesseract` OCR (`poppler-utils` and `tesseract-ocr` baked into `indexer/Dockerfile`).
 
 ---
 
-## Stage C · Embedding & Model Pinning (Silent Embedding Divergence)
-- **What we broke**: Changed `EMBED_MODEL` in the API ConfigMap to `all-MiniLM-L6-v2` while leaving the Chroma index populated with `nomic-embed-text` vectors, without triggering a re-index.
-- **Symptom**: API returned gibberish retrieval results with near-zero similarity scores (`score < 0.20`), triggering blanket abstention across all queries.
-- **Diagnosis (as if uncaused)**:
-  * Readiness probe endpoint output: `curl http://rahbar-api.rahbar:8000/readyz` returned `HTTP 503 Service Unavailable`:
-    ```json
-    {
-      "status": "not_ready",
-      "checks": {
-        "embed_model": "embedding_model mismatch: index has nomic-embed-text != configured all-MiniLM-L6-v2"
-      }
-    }
-    ```
-  * Application logs: `kubectl logs deploy/rahbar-api -n rahbar` logged:
-    `ERROR: embedding model mismatch detected: index uses nomic-embed-text but API configured with all-MiniLM-L6-v2`.
-- **Remedy**: Pinned the model centrally in `k8s/base/configmap.yaml` under `EMBED_MODEL` and ensured `/readyz` blocks pod readiness until the API and Chroma collection agree.
+## Stage B · Chunking — Fixed-Size 100-Token Chunks With Zero Overlap
+- **How we broke it**: Replaced structure-aware splitting in `indexer/pipeline/chunk.py` with a naive fixed 400-character (~100-token) slice and `CHUNK_OVERLAP=0`.
+- **Symptom**: Answers to multi-condition clauses (e.g., `q04` prerequisite failure, `q06` plagiarism penalties) became incomplete or missed exact thresholds, and `eval/run_eval.py` failed the CI gate (`recall@5` dropped from `0.8750` to `0.6200`).
+- **Blind Diagnosis (Metrics & Logs)**:
+  - API JSON request logs showed chunks retrieved from the right `source`, but `section` was `"General Overview"` because clause headers had been sliced into the tail of the preceding chunk with zero overlap.
+  - `eval/results.json` showed `recall@5` dropping > 25 points while `rahbar_fallbacks_total` stayed `0` (proving generation was healthy and Stage B/C was at fault).
+- **Remedy**: Restored hierarchical heading → paragraph → sentence chunking with `CHUNK_SIZE=400` and `CHUNK_OVERLAP=50`, attaching detected clause headings to every emitted chunk's `section` metadata.
 
 ---
 
-## Stage D · Retrieval (Superseded Policy Leakage)
-- **What we broke**: Removed the `superseded` filter in `api/app/retrieval/chroma.py`.
-- **Symptom**: When asking about course repetition rules, the retriever returned the repealed 2023 handbook clause rather than the active 2026 handbook, leading to factually incorrect advisory responses.
-- **Diagnosis (as if uncaused)**:
-  * Golden evaluation run: `python eval/run_eval.py` failed question `q09` (`type: version`).
-  * Response inspection: `AskResponse.retrieved` contained `source: "undergraduate-academic-rules-aug-2023.pdf"`.
-- **Remedy**: Applied strict metadata filtering in `ChromaRetriever.retrieve` to exclude chunks where `superseded == True`.
+## Stage C · Retrieval — Change `EMBED_MODEL` on the API Only
+- **How we broke it**: Patched `EMBED_MODEL: "all-minilm"` in `ConfigMap/rahbar-config` and restarted `Deployment/rahbar-api` without running a re-index Job.
+- **Symptom**: Newly created API pod stayed at `0/1 READY` (with the guardrail enabled). When tested *without* the guardrail locally, retrieval returned nonsensical chunks with similarity scores `< 0.15`, causing 100% false abstentions.
+- **Blind Diagnosis (Metrics & Logs)**:
+  - `kubectl get pods -n rahbar` showed the replacement pod held at `0/1 READY`, and `/readyz` returned HTTP `503`.
+  - `kubectl logs` printed the exact JSON error: `"embedding model mismatch detected: index uses nomic-embed-text (dim=768) but API configured with all-minilm"`.
+  - Without the guardrail, `rahbar_abstentions_total` jumped to 100% of requests while `scores` in the `"answered"` log line collapsed near zero across every query.
+- **Remedy**: Enforced the shared `EMBED_MODEL` pin in `ConfigMap/rahbar-config`, recorded `embed_model` and `dimension` in Chroma collection metadata (`indexer/pipeline/store.py`), and verified parity in `verify_embedding_pin` + `/readyz` (`api/app/routes/health.py`).
 
 ---
 
-## Stage E · Augmentation (Context Dilution and Prompt Injection)
-- **What we broke**: Removed the prompt injection filter in `api/app/services/grounding.py` and injected a prompt override string in a query.
-- **Symptom**: Model output bypassed grounding instructions and attempted to answer conversational small-talk without citing documents.
-- **Diagnosis (as if uncaused)**:
-  * Log search: `kubectl logs -l app=rahbar,component=api -n rahbar | grep "injection"` returned zero hits.
-  * Evaluation runner: `q16` (`type: injection`) returned `answered_from_context: true` instead of declining.
-- **Remedy**: Added regex-based injection detection in `grounding.py` and strict prompt fencing (`System: You are RAHBAR...`), forcing immediate honest abstention when adversarial prompts are detected.
+## Stage D · Prompt — Remove the "Use Only Supplied Context" Instruction
+- **How we broke it**: Removed the grounding constraint (*"answer strictly using the supplied `<untrusted_document_data>` excerpts"*) from `HostedProvider._build_prompt` in `api/app/providers/llm/hosted.py`.
+- **Symptom**: On must-abstain hostel and bus shuttle questions (`q14`, `q15`) when `RELEVANCE_FLOOR` was lowered, the LLM confidently invented generic university hostel curfews and fabricated non-existent section names, failing `abstention_correctness` (`< 1.0`) and `citation_validity` (`< 0.95`).
+- **Blind Diagnosis (Metrics & Logs)**:
+  - In `msg: "answered"` logs, `scores` were low (`0.16–0.22`) and `chunk_ids` pointed to unrelated fee pages, yet `answered_from_context` was `true`.
+  - `eval/run_eval.py` reported `Gate Failure: Abstention correctness 50.0% is below required 100.0%` and `citation_validity` dropped below `0.95`.
+- **Remedy**: Restored strict grounding instructions + `<untrusted_document_data>` XML delimiters, enforced `RELEVANCE_FLOOR=0.15` pre-generation abstention in `answer.py`, and validated every `(source, section)` citation in `grounding.validate_citations`.
 
 ---
 
-## Stage F · Generation (High Temperature Hallucination & Schema Corruption)
-- **What we broke**: Increased LLM temperature to `1.2` and removed `response_format={"type": "json_object"}`.
-- **Symptom**: Model started inventing non-existent university clauses (hallucinated `Clause 9.99`) and returned conversational markdown preamble, causing JSON parsing to fail.
-- **Diagnosis (as if uncaused)**:
-  * API logs showed repeated validation warnings:
-    `WARNING: validation failure on attempt 1: ValidationError (Answer)`.
-  * Fallback log: `ERROR: all retries exhausted; returning safe fallback response`.
-  * Citation validity dropped to `72%` in `eval/run_eval.py`.
-- **Remedy**: Enforced constrained decoding (`response_format={"type": "json_object"}`), lowered temperature to `0.2`, added Pydantic validation with 2 retries, and implemented deterministic citation matching against retrieved chunks.
+## Stage E · Source — Remove the `superseded` Filter on Version-Sensitive Questions
+- **How we broke it**: Disabled the `where={"superseded": False}` filter in `ChromaRetriever.retrieve` (`api/app/retrieval/chroma.py`) and asked `q09` (*"Under current 2026 rules, can a student repeat a course if they obtained a grade of C?"*).
+- **Symptom**: The API confidently quoted the repealed `2023-08` handbook (`undergraduate-academic-rules-aug-2023.pdf`) instead of the active `2026-06` handbook, giving outdated academic advice.
+- **Blind Diagnosis (Metrics & Logs)**:
+  - `rahbar_retrieval_latency_seconds` and `scores` (`0.88`) looked completely normal!
+  - Inspecting `chunk_ids` in the per-request JSON log (`"chunk_ids": ["undergraduate-academic-rules-aug-2023.pdf-p14-0031"]`) immediately revealed a `superseded: true` source entering top-$k$ retrieval, and `eval/run_eval.py` failed `type_recall5["version"]`.
+- **Remedy**: Restored `where={"superseded": False}` metadata filtering in `ChromaRetriever.retrieve`, bypassed only when `asks_for_older_version(question)` detects an explicit historical query (such as `q10` asking specifically about 2023 rules).
+
+---
+
+## Stage F · Generation — Raise `TEMPERATURE` to `1.2`
+- **How we broke it**: Raised `TEMPERATURE` from `"0.2"` to `"1.2"` in `ConfigMap/rahbar-config`.
+- **Symptom**: Occasional malformed JSON / schema drift triggered retries and safe fallback responses, while answers paraphrased numerical thresholds loosely and invented non-retrieved sub-clauses.
+- **Blind Diagnosis (Metrics & Logs)**:
+  - `rahbar_fallbacks_total` became non-zero in `/metrics`, `rahbar_generation_latency_seconds` doubled on requests that hit retry attempt 2, and `rahbar.llm.hosted` logged `WARNING: validation failure on attempt 1`.
+  - Unlike Stages A–E, `chunk_ids` and `scores` in the request log were completely accurate—confirming retrieval succeeded and isolating the fault to Stage F.
+- **Remedy**: Pinned `TEMPERATURE: "0.2"` in `k8s/base/configmap.yaml`, enforced JSON schema / `json_object` constrained decoding, kept 1 validation retry at reduced temperature (`temperature - 0.1`), and stripped any unverified citations in `validate_citations`.

@@ -4,7 +4,7 @@ rahbar-api-6878b46d79-2k7p9            12m          148Mi
 rahbar-api-6878b46d79-5x9m2            14m          152Mi
 rahbar-api-6878b46d79-w8q41            11m          145Mi
 rahbar-chroma-0                        22m          210Mi
-rahbar-redis-master-0                  5m           32Mi
+rahbar-redis-5f7d9c4b86-m4k2p          5m           32Mi
 rahbar-ui-7d949b5c97-6qj8k             2m           18Mi
 rahbar-indexer-job-v1-4ln82            840m         680Mi (Peak during nomic-embed-text embedding batch)
 
