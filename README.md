@@ -167,7 +167,7 @@ ruff check api/ indexer/ eval/ corpus/
 (cd api && mypy --ignore-missing-imports app)
 (cd indexer && mypy --ignore-missing-imports pipeline)
 
-# Evaluate live stack against the 16-question golden set & enforce CI regression gate
+# Evaluate live stack against the 18-question golden set & enforce CI regression gate
 python eval/run_eval.py --api "http://${INGRESS_IP:-127.0.0.1}" --host rahbar.local
 
 # Mechanical submission linter
