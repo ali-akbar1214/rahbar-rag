@@ -73,7 +73,7 @@ class HostedProvider:
 
     def generate(self, question: str, passages: list[Passage]) -> Answer:
         """Call hosted provider with constrained decoding, retry on validation failure, and safe fallback."""
-        if not self.base_url:
+        if not self.base_url or not self.api_key:
             if not passages:
                 return Answer(
                     reasoning="No passages provided for offline hosted provider.",

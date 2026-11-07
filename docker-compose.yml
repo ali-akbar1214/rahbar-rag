@@ -18,6 +18,22 @@ services:
       - "6379:6379"
     command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
 
+  indexer:
+    build:
+      context: indexer/
+      dockerfile: Dockerfile
+    container_name: rahbar-indexer
+    restart: on-failure
+    environment:
+      - EMBED_MODEL=lexical-hash-768
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8000
+      - CHROMA_COLLECTION=rahbar
+      - AUTO_FETCH_CORPUS=true
+      - HOME=/tmp
+    depends_on:
+      - chroma
+
   api:
     build:
       context: api/
@@ -33,6 +49,7 @@ services:
       - CHROMA_PORT=8000
       - CHROMA_COLLECTION=rahbar
       - TOP_K=5
+      - RELEVANCE_FLOOR=0.15
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - CACHE_ENABLED=true
@@ -40,18 +57,46 @@ services:
       - HOSTED_BASE_URL=https://api.groq.com/openai/v1
       - LLM_API_KEY=${LLM_API_KEY:-}
     depends_on:
-      - chroma
-      - redis
+      chroma:
+        condition: service_started
+      redis:
+        condition: service_started
+      indexer:
+        condition: service_completed_successfully
 
   ui:
     build:
       context: ui/
       dockerfile: Dockerfile
     container_name: rahbar-ui
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     depends_on:
       - api
+
+  gateway:
+    image: nginx:1.27-alpine
+    container_name: rahbar-gateway
+    ports:
+      - "8080:8080"
+    command:
+      - /bin/sh
+      - -c
+      - |
+        cat <<'EOF' > /etc/nginx/conf.d/default.conf
+        server {
+          listen 8080;
+          location /api/ { proxy_pass http://api:8000/api/; proxy_set_header Host $$host; }
+          location = /readyz { proxy_pass http://api:8000/readyz; }
+          location = /healthz { proxy_pass http://api:8000/healthz; }
+          location = /metrics { proxy_pass http://api:8000/metrics; }
+          location / { proxy_pass http://ui:8080/; proxy_set_header Host $$host; }
+        }
+        EOF
+        exec nginx -g 'daemon off;'
+    depends_on:
+      - api
+      - ui
 
 volumes:
   chroma_data:
