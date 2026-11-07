@@ -118,12 +118,13 @@ jobs:
           kubectl apply -f k8s/base/redis.yaml
           kubectl rollout status statefulset/rahbar-chroma -n rahbar --timeout=180s
           kubectl rollout status deployment/rahbar-redis -n rahbar --timeout=120s
-          sed "s|aliakbar1214/rahbar-indexer:v1.0.0|${IMG_USER}/rahbar-indexer:${{ github.sha }}|g" \
+          kubectl apply -f k8s/base/networkpolicy.yaml
+          sed -E "s|aliakbar1214/rahbar-indexer:[a-zA-Z0-9._-]+|${IMG_USER}/rahbar-indexer:${{ github.sha }}|g" \
             k8s/base/indexer-job.yaml | kubectl apply -f -
           kubectl wait --for=condition=complete job/rahbar-indexer-job -n rahbar --timeout=180s
-          sed "s|aliakbar1214/rahbar-api:v1.0.0|${IMG_USER}/rahbar-api:${{ github.sha }}|g" \
+          sed -E "s|aliakbar1214/rahbar-api:[a-zA-Z0-9._-]+|${IMG_USER}/rahbar-api:${{ github.sha }}|g" \
             k8s/base/api-deployment.yaml | kubectl apply -f -
-          sed "s|aliakbar1214/rahbar-ui:v1.0.0|${IMG_USER}/rahbar-ui:${{ github.sha }}|g" \
+          sed -E "s|aliakbar1214/rahbar-ui:[a-zA-Z0-9._-]+|${IMG_USER}/rahbar-ui:${{ github.sha }}|g" \
             k8s/base/ui-deployment.yaml | kubectl apply -f -
           for i in $(seq 1 5); do
             kubectl apply -f k8s/base/ingress.yaml && break
