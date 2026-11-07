@@ -5,15 +5,15 @@ metadata:
   namespace: rahbar
 data:
   RETRIEVER: "chroma"
-  LLM_PROVIDER: "hosted"
-  EMBED_MODEL: "lexical-hash-768"
+  LLM_PROVIDER: "ollama-host"
+  EMBED_MODEL: "nomic-embed-text"
   CHROMA_HOST: "rahbar-chroma"
   CHROMA_PORT: "8000"
   CHROMA_COLLECTION: "rahbar"
   TOP_K: "5"
   # Low temperature (0.2 in [0.0, 0.3]) keeps policy citations and JSON schema generation deterministic without suppressing syntactic fluency.
   TEMPERATURE: "0.2"
-  LLM_MODEL: "llama-3.3-70b-versatile"
+  LLM_MODEL: "llama3.2:3b"
   OLLAMA_URL: "http://host.minikube.internal:11434"
   HOSTED_BASE_URL: "https://api.groq.com/openai/v1"
   RELEVANCE_FLOOR: "0.15"

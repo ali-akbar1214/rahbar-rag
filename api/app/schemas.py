@@ -29,16 +29,18 @@ class Passage(BaseModel):
 
 
 class Citation(BaseModel):
-    source: str
-    section: str
+    source: str = Field(description="Exact source filename copied from a supplied passage.")
+    section: str = Field(description="Exact section heading copied verbatim from that supplied passage.")
     page: int | None = None
 
 
 class Answer(BaseModel):
     """The model's output contract. Send its JSON schema to the model, then validate."""
 
-    reasoning: str
-    answer: str
+    reasoning: str = Field(description="Brief 1-sentence internal note identifying the matching passage.")
+    answer: str = Field(
+        description="Complete user-facing answer in 1 to 3 full sentences stating the policy rule clearly."
+    )
     citations: list[Citation]
     answered_from_context: bool
     confidence: Literal["high", "medium", "low"]

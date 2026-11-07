@@ -10,7 +10,7 @@ def get_provider(settings: Settings) -> LLMProvider:
         from .stub import StubProvider
 
         return StubProvider()
-    if name in ("ollama-host", "ollama-incluster"):
+    if name in ("ollama", "ollama-host", "ollama-incluster"):
         from .ollama import OllamaProvider
 
         return OllamaProvider(settings)

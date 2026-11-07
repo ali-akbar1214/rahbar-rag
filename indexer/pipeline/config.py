@@ -20,7 +20,7 @@ class IndexerSettings:
 
 def get_settings() -> IndexerSettings:
     return IndexerSettings(
-        embed_model=os.environ.get("EMBED_MODEL", "lexical-hash-768"),
+        embed_model=os.environ.get("EMBED_MODEL", "nomic-embed-text"),
         chroma_host=os.environ.get("CHROMA_HOST", "chroma"),
         chroma_port=int(os.environ.get("CHROMA_PORT", 8000)),
         collection=os.environ.get("CHROMA_COLLECTION", "rahbar"),
