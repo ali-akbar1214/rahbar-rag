@@ -20,6 +20,15 @@ _STOPWORDS = frozenset({
     "when", "where", "which", "who", "why", "with",
 })
 
+_HISTORICAL_YEAR_RE = re.compile(r"\b(2019|2020|2021|2022|2023|2024)\b")
+_CURRENT_YEAR_RE = re.compile(r"\b(2026|2027|current|active|latest)\b", re.IGNORECASE)
+_OLDER_VERSION_PHRASE_RE = re.compile(
+    r"\b(?:old|older|previous|prior|superseded|former|historical|earlier|repealed)\s+"
+    r"(?:version|policy|policies|rules?|handbook|edition|regulations?)\b"
+    r"|\bunder\s+the\s+old\b",
+    re.IGNORECASE,
+)
+
 
 def _stem(word: str) -> str:
     for suffix in ("ance", "ence", "ing", "tion"):
@@ -69,6 +78,60 @@ def _expand_for_retrieval(query: str) -> str:
     return query
 
 
+def embed_query_text(text: str, settings: Settings) -> list[float]:
+    """Embed a user question using the pinned `EMBED_MODEL` (shared by retriever & semantic cache)."""
+    if (
+        settings.llm_provider.lower() == "stub"
+        or settings.retriever.lower() == "stub"
+        or settings.embed_model == "lexical-hash-768"
+    ):
+        return _offline_vector(_expand_for_retrieval(text), 768)
+
+    embed_base_url = os.environ.get("EMBED_BASE_URL", "")
+    api_key = os.environ.get("EMBED_API_KEY") or settings.llm_api_key or os.environ.get("LLM_API_KEY", "")
+
+    try:
+        if embed_base_url:
+            client_url = embed_base_url.rstrip("/") + "/embeddings"
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            with httpx.Client(timeout=15.0) as client:
+                resp = client.post(
+                    client_url,
+                    json={"model": settings.embed_model, "input": [text]},
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                return list(resp.json()["data"][0]["embedding"])
+        else:
+            endpoint = f"{settings.ollama_url.rstrip('/')}/api/embed"
+            with httpx.Client(timeout=httpx.Timeout(15.0, connect=2.0)) as client:
+                resp = client.post(
+                    endpoint,
+                    json={"model": settings.embed_model, "input": [text]},
+                )
+                if resp.status_code == 404:
+                    r2 = client.post(
+                        f"{settings.ollama_url.rstrip('/')}/api/embeddings",
+                        json={"model": settings.embed_model, "prompt": text},
+                    )
+                    r2.raise_for_status()
+                    return list(r2.json()["embedding"])
+                resp.raise_for_status()
+                return list(resp.json()["embeddings"][0])
+    except Exception:
+        # Deterministic fallback vector for offline testing
+        return _offline_vector(_expand_for_retrieval(text), 768)
+
+
+def asks_for_older_version(question: str) -> bool:
+    """Return True only when the user explicitly asks about an older/superseded policy version."""
+    if _OLDER_VERSION_PHRASE_RE.search(question):
+        return True
+    if _HISTORICAL_YEAR_RE.search(question) and not _CURRENT_YEAR_RE.search(question):
+        return True
+    return False
+
+
 class ChromaRetriever:
     name = "chroma"
 
@@ -77,6 +140,7 @@ class ChromaRetriever:
         from chromadb.config import Settings as ChromaSettings
 
         self.settings = settings
+        self.last_indexed_at: str | None = None
         self.client = chromadb.HttpClient(
             host=settings.chroma_host,
             port=settings.chroma_port,
@@ -85,61 +149,50 @@ class ChromaRetriever:
 
     def _embed_query(self, text: str) -> list[float]:
         """Embed the query with the pinned embed_model."""
-        if self.settings.llm_provider.lower() == "stub" or self.settings.embed_model == "lexical-hash-768":
-            return _offline_vector(_expand_for_retrieval(text), 768)
+        return embed_query_text(text, self.settings)
 
-        hosted_url = self.settings.hosted_base_url or os.environ.get("HOSTED_BASE_URL", "")
-        api_key = self.settings.llm_api_key or os.environ.get("LLM_API_KEY", "")
-
+    def get_index_generation(self) -> str | None:
+        """Return the Chroma collection's `indexed_at` metadata token to detect re-indexing."""
         try:
-            if hosted_url:
-                client_url = hosted_url.rstrip("/") + "/embeddings"
-                headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-                with httpx.Client(timeout=15.0) as client:
-                    resp = client.post(
-                        client_url,
-                        json={"model": self.settings.embed_model, "input": [text]},
-                        headers=headers,
-                    )
-                    resp.raise_for_status()
-                    return resp.json()["data"][0]["embedding"]
-            else:
-                endpoint = f"{self.settings.ollama_url.rstrip('/')}/api/embed"
-                with httpx.Client(timeout=15.0) as client:
-                    resp = client.post(
-                        endpoint,
-                        json={"model": self.settings.embed_model, "input": [text]},
-                    )
-                    if resp.status_code == 404:
-                        r2 = client.post(
-                            f"{self.settings.ollama_url.rstrip('/')}/api/embeddings",
-                            json={"model": self.settings.embed_model, "prompt": text},
-                        )
-                        r2.raise_for_status()
-                        return r2.json()["embedding"]
-                    resp.raise_for_status()
-                    return resp.json()["embeddings"][0]
+            collection = self.client.get_collection(name=self.settings.collection)
+            meta = getattr(collection, "metadata", None) or {}
+            gen = meta.get("indexed_at")
+            if gen:
+                self.last_indexed_at = str(gen)
+            return self.last_indexed_at
         except Exception:
-            # Deterministic fallback vector for offline testing
-            return _offline_vector(text, 768)
+            return self.last_indexed_at
 
     def retrieve(self, question: str, k: int) -> list[Passage]:
-        """Embed question, query ChromaDB, filter superseded policies, and return Passages."""
+        """Embed question, query ChromaDB with superseded metadata filter, and return Passages."""
         try:
             collection = self.client.get_collection(name=self.settings.collection)
         except Exception:
             return []
 
-        query_vector = self._embed_query(question)
+        col_meta = getattr(collection, "metadata", None) or {}
+        if col_meta.get("indexed_at"):
+            self.last_indexed_at = str(col_meta["indexed_at"])
 
-        # Retrieve extra candidates so we can discard superseded passages without dropping below k
+        query_vector = self._embed_query(question)
+        include_superseded = asks_for_older_version(question)
+
         n_results = max(k * 2, 10)
         q_emb: Any = [query_vector]
-        results = collection.query(
-            query_embeddings=q_emb,
-            n_results=n_results,
-            include=["documents", "metadatas", "distances"],
-        )
+        query_kwargs: dict[str, Any] = {
+            "query_embeddings": q_emb,
+            "n_results": n_results,
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if not include_superseded:
+            query_kwargs["where"] = {"superseded": False}
+
+        try:
+            results = collection.query(**query_kwargs)
+        except TypeError:
+            # Support simplified mock collections in unit tests that omit `where`
+            query_kwargs.pop("where", None)
+            results = collection.query(**query_kwargs)
 
         passages: list[Passage] = []
         if not results or not results["ids"] or not results["ids"][0]:
@@ -154,10 +207,11 @@ class ChromaRetriever:
         distances = raw_dists[0] if raw_dists else [0.0] * len(ids)
 
         for cid, doc_text, meta, dist in zip(ids, docs, metas, distances):
-            # Explicitly filter out superseded clauses: outdated policies must not be served
-            superseded = meta.get("superseded", False)
-            if superseded is True or str(superseded).lower() == "true":
-                continue
+            # Exclude superseded documents unless the user explicitly asked about an older version
+            if not include_superseded:
+                superseded = meta.get("superseded", False)
+                if superseded is True or str(superseded).lower() == "true":
+                    continue
 
             # Convert cosine distance to similarity score: similarity = 1 - distance
             score = 1.0 - float(dist)
